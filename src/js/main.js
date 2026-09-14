@@ -62,6 +62,14 @@ $('btnCanvas').addEventListener('click', () => {
   toast('Canvas size and frame rate are in Properties on the right');
 });
 $('btnHelp').addEventListener('click', showHelp);
+$('btnImport').addEventListener('click', () => library.pick());
+
+// Tell people where to put their files until there are some.
+function paintEmptyState() {
+  $('stageEmpty').hidden = media.list().length > 0 || store.allClips().length > 1;
+}
+media.on('change', paintEmptyState);
+store.on('change', paintEmptyState);
 
 function doSplit() {
   const ids = store.selection.length ? store.selection : null;
@@ -412,6 +420,7 @@ function showHelp() {
 store.emit('history');
 timeline.render();
 paintTime();
+paintEmptyState();
 playback.invalidate();
 
 // A starting point so the app is never a blank grid.
