@@ -111,7 +111,7 @@ export class Exporter {
         info.innerHTML =
           `${frames} PNG frames at ${p.width} x ${p.height} (${p.fps} fps) plus <code>audio.wav</code>. ` +
           `Mux them losslessly with:<br><code>ffmpeg -framerate ${p.fps} -i frame_%05d.png -i audio.wav ` +
-          `-c:v libx264 -crf 12 -preset slow -pix_fmt yuv420p -c:a aac -b:a 320k out.mp4</code>`;
+          `-c:v libx264 -crf 12 -preset slow -pix_fmt yuv420p -c:a aac -b:a 320k -movflags +faststart out.mp4</code>`;
       }
     };
     modeSel.addEventListener('change', sync);
@@ -181,8 +181,8 @@ export class Exporter {
         const v = this.media.videoFor(clip);
         if (!v) continue;
         if (!v.paused) v.pause();
-        const want = clip.inPoint + (t - clip.start) * (clip.speed || 1);
-        jobs.push(Playback.seekExact(v, want));
+        // Same sampling rule the preview uses, so the two stay frame-identical.
+        jobs.push(Playback.seekExact(v, this.playback.sourceTimeOf(clip, t)));
       }
     }
     if (jobs.length) await Promise.all(jobs);
@@ -238,14 +238,18 @@ export class Exporter {
     progress(total / (total + 2), 'Mixing audio...');
     const hasAudio = this.store.project.tracks.some((tr) => tr.clips.some((c) => c.type === 'audio' || c.type === 'video'));
     if (hasAudio) {
-      const mix = await this.audio.mixdown(0, dur);
+      // Mix exactly as many seconds as there are frames. The timeline duration
+      // is rarely a whole number of frames, and handing ffmpeg a WAV that is a
+      // little longer or shorter than the picture leaves it to pad or truncate.
+      const mix = await this.audio.mixdown(0, total / p.fps);
       await writeFile('audio.wav', encodeWav(mix));
     }
     const readme =
       `# ${p.name}\n\n${total} frames, ${p.width}x${p.height}, ${p.fps} fps.\n\n` +
       `Mux to a master file:\n\n` +
       `ffmpeg -framerate ${p.fps} -i frame_%05d.png${hasAudio ? ' -i audio.wav' : ''} ` +
-      `-c:v libx264 -crf 12 -preset slow -pix_fmt yuv420p${hasAudio ? ' -c:a aac -b:a 320k' : ''} ${base}.mp4\n\n` +
+      `-c:v libx264 -crf 12 -preset slow -pix_fmt yuv420p${hasAudio ? ' -c:a aac -b:a 320k' : ''} ` +
+      `-movflags +faststart ${base}.mp4\n\n` +
       `Truly lossless (bigger file):\n\n` +
       `ffmpeg -framerate ${p.fps} -i frame_%05d.png${hasAudio ? ' -i audio.wav' : ''} ` +
       `-c:v libx264 -qp 0 -preset veryslow -pix_fmt yuv444p${hasAudio ? ' -c:a flac' : ''} ${base}_lossless.mkv\n`;
