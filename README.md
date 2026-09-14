@@ -31,8 +31,10 @@ downloads as a `.zip` instead of being written into a folder you choose.
 ## Importing media
 
 Drag image, video or audio files anywhere into the window, click **Import** in
-the toolbar, or press `Ctrl I`. They appear in the media pool on the left; drag
-one onto a track, or double-click it to drop it at the playhead.
+the toolbar, or press `Ctrl I`. Whole folders can be dropped too — they are
+walked recursively and every media file inside is imported. Everything appears
+in the media pool on the left; drag one onto a track, or double-click it to drop
+it at the playhead.
 
 ## What it does
 
@@ -110,8 +112,37 @@ There is also **Current frame only** for a single PNG.
 ## Projects
 
 `Save` writes a `.videdit.json` containing the whole edit. Media is referenced
-by name, not embedded, so the file stays small — reopening asks you to pick the
-media files again and relinks them by filename.
+by name, path and size, not embedded, so the file stays small.
+
+### Relinking
+
+Reopening a project has to find those files again. That is one dialog, and it
+stays open until every file is accounted for:
+
+- **Add folder…** searches a whole folder tree, subfolders included. Only the
+  files that actually match are read, so pointing it at a large media folder is
+  cheap.
+- **Add files…**, or dropping files and folders straight onto the dialog, does
+  the same thing. Media split across several folders just takes several rounds —
+  nothing is lost between them, and the list shows what is still outstanding.
+- **Locate…** on a single row binds one file by hand, whatever it is called.
+
+On Chrome and Edge the folders you use are remembered between reloads, so the
+usual case — the same media folder as last time — relinks with no clicks at all:
+they are searched before the dialog is ever shown, and it only appears for
+what they could not find. Remembered folders are listed in the dialog and can be
+dropped from it at any time. Firefox and Safari have no such API, so there the
+folder has to be picked each time.
+
+Matching is on filename first, then relative path and file size — a file that
+was renamed but is the right size, or re-exported to another format, is still
+found. A file that merely happens to be the right *kind* is never bound
+silently; anything the matcher is not confident about waits for **Locate…**.
+
+Clips whose media is missing stay on the timeline, hatched and badged, and the
+media panel keeps a count with a way back into the dialog. Saving in that state
+keeps the missing files listed, so a half-relinked project does not forget what
+it is still looking for.
 
 ## Shortcuts
 
@@ -148,6 +179,12 @@ undo, pan interpolation, track stacking, text and its shadow, the visualiser
 spectrum, the offline audio mixdown, a still export, and a real mouse drag
 through empty track space to check scrubbing and playhead snapping.
 
+Relinking is covered end to end: a project whose media sits in two different
+folders is reopened with nothing loaded, then relinked one folder at a time
+through the real dialog — which also checks that a file of the right kind but
+the wrong name is left alone, that nothing is imported twice, and that the
+folder walkers and the remembered-folder store behave.
+
 ## Layout of the code
 
 ```
@@ -163,6 +200,8 @@ src/js/
   inspector.js      properties panel
   library.js        media pool, text and visualiser presets
   exporter.js       PNG sequence / WebM / still
+  relink.js         finding a reopened project's media again
+  folders.js        folder scanning, dropped folders, remembered folders
   fft.js  zip.js  icons.js  util.js
 ```
 

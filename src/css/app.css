@@ -377,6 +377,13 @@ select.inp option { background: var(--bg-2); }
   position: absolute; right: 5px; top: 3px; width: 13px; height: 13px;
   display: grid; place-items: center; border-radius: 3px; background: rgba(0,0,0,.45); color: #fff;
 }
+/* Media that is not loaded: hatched, so an offline clip never reads as empty. */
+.clip.offline { background: repeating-linear-gradient(45deg, var(--bg-3) 0 7px, var(--bg-2) 7px 14px); }
+.clip.offline .fill { background: rgba(240,180,41,.1); }
+.clip.offline .offline-badge {
+  position: absolute; left: 5px; top: 3px; width: 13px; height: 13px;
+  display: grid; place-items: center; border-radius: 3px; background: var(--warn); color: #21160a;
+}
 
 .playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--danger); z-index: 8; pointer-events: none; }
 .playhead::before {
@@ -393,6 +400,39 @@ select.inp option { background: var(--bg-2); }
 .modal header .spacer { flex: 1; }
 .modal .body { padding: 14px 16px; display: flex; flex-direction: column; gap: 11px; }
 .modal footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
+/* ------------------------------------------------------------- relinking */
+.modal.relink { width: min(620px, 94vw); }
+.relink-actions { display: flex; gap: 8px; }
+.dropzone.sm { padding: 11px 12px; gap: 3px; cursor: default; }
+.dropzone.sm b { font-size: 12px; }
+.relink-list { display: flex; flex-direction: column; gap: 5px; max-height: 260px; overflow: auto; }
+.relink-sub { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-mute); margin: 4px 0 2px; }
+.relink-folders { display: flex; flex-direction: column; gap: 5px; }
+.relink-row {
+  display: flex; align-items: center; gap: 9px; padding: 7px 9px;
+  background: var(--bg-0); border: 1px solid var(--line); border-radius: var(--r-sm);
+}
+.relink-row.missing { border-left: 2px solid var(--warn); }
+.relink-row.ok { border-left: 2px solid var(--accent-2); }
+.relink-row .txt { flex: 1; min-width: 0; }
+.relink-row .nm { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.relink-row .sub { font-size: 10px; color: var(--text-mute); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.relink-row .dot { width: 7px; height: 7px; border-radius: 99px; flex: none; }
+.relink-row .dot.bad { background: var(--warn); box-shadow: 0 0 8px rgba(240,180,41,.6); }
+.relink-row .dot.good { background: var(--accent-2); }
+.relink-row .tag.ok { font-size: 10px; color: var(--accent-2); font-family: var(--mono); }
+.relink-row .ic { color: var(--text-mute); flex: none; }
+
+.offline-banner {
+  display: flex; align-items: center; gap: 9px; margin-bottom: 10px; padding: 8px 9px;
+  background: rgba(240,180,41,.08); border: 1px solid rgba(240,180,41,.35);
+  border-left: 2px solid var(--warn); border-radius: var(--r-sm);
+}
+.offline-banner .ic { color: var(--warn); flex: none; }
+.offline-banner .txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.offline-banner b { font-size: 11.5px; color: var(--text); }
+.offline-banner span { font-size: 10px; color: var(--text-mute); line-height: 1.4; }
+
 .progress { height: 5px; background: var(--bg-0); border-radius: 99px; overflow: hidden; border: 1px solid var(--line); }
 .progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); width: 0; transition: width .12s; }
 .log { font-family: var(--mono); font-size: 11px; color: var(--text-mute); max-height: 130px; overflow: auto; white-space: pre-wrap; background: var(--bg-0); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px; }
