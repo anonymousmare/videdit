@@ -103,8 +103,13 @@ export class Renderer {
     return { sx, sy, sw, sh };
   }
 
-  /** Destination box in canvas pixels. Used for drawing AND for preview handles. */
-  boxFor(clip, t) {
+  /**
+   * Destination box in canvas pixels. Used for drawing AND for preview handles.
+   * Pass `{ snapPixels: false }` for the true sub-pixel box — alignment
+   * snapping works in that space, so that a box whose width is fractional
+   * still lands dead on the guide instead of half a pixel beside it.
+   */
+  boxFor(clip, t, { snapPixels = true } = {}) {
     const src = this.sourceSizeOf(clip);
     if (!src) return null;
     const { sw, sh } = Renderer.sourceRect(clip, src.w, src.h);
@@ -118,7 +123,7 @@ export class Renderer {
     // the opposite of what it promises: a pan travelling 0.8 px per frame comes
     // out as hold, jump, jump, hold — a stepped crawl rather than a glide. So
     // stills stay snapped and motion runs at subpixel precision.
-    if (clip.pixelSnap && !tr.rotation && !hasMotion(clip)) {
+    if (snapPixels && clip.pixelSnap && !tr.rotation && !hasMotion(clip)) {
       left = Math.round(left);
       top = Math.round(top);
     }
@@ -213,7 +218,13 @@ export class Renderer {
     const widths = lines.map((l) => measure(ctx, l, ts.letterSpacing));
     ctx.restore();
     const lineH = ts.size * ts.lineHeight;
-    return { lines, widths, lineH, width: Math.max(1, ...widths), height: Math.max(1, lines.length * lineH) };
+    // A wrap width is a COLUMN, not just a limit: the block keeps that width
+    // even when the text falls short of it, which is the only thing that gives
+    // left/centre/right anywhere to align to. Without one the block shrinks to
+    // the longest line, so alignment only shifts the shorter lines under it.
+    const content = Math.max(1, ...widths);
+    const width = ts.maxWidth > 0 ? Math.max(ts.maxWidth, content) : content;
+    return { lines, widths, lineH, width, height: Math.max(1, lines.length * lineH) };
   }
 
   measureText(clip) {

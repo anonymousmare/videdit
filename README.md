@@ -79,9 +79,28 @@ its left edge, and a dashed outline shows the exact span and lane it will occupy
 (snapped, if snapping is on) before the mouse comes up. Where the outline is is
 where the clip lands.
 
+**Composing on the frame** — dragging a title into place by eye never quite
+lands it on the centre line, so a drag looks for the nearby guides — the frame's
+edges, halves and thirds, and the edges and centres of the other clips on screen
+— and pulls the box onto the closest one, drawing the line it caught. The frame's
+own lines outrank a neighbouring clip's, and landing a box by its centre outranks
+landing it by an edge, so a guide a pixel nearer does not steal the alignment you
+were aiming for. The tolerance is in screen pixels, so it feels the same at any
+zoom. Hold `Alt` for a free-hand drag, or turn the magnet in the transport off.
+Properties also carries a six-way **Align** row that puts the clip flush against
+an edge of the frame, or centres it on either axis, in one click — it works off
+the box as rendered, so it accounts for scale, crop and a text block's real
+measured size, and it shifts a pan by moving both of its ends.
+
 **Text with shadows** — font, size, weight, colour, alignment, line height,
 letter spacing, wrap width, plus a drop shadow (colour, opacity, blur, offset),
-an outline, and a background box. Four presets to start from.
+an outline, and a background box. Four presets to start from. A wrap width is a
+*column*, not just a limit: the block keeps that width even when the text falls
+short of it, which is what gives left / centre / right somewhere to range the
+lines. With no wrap width the block hugs the text, so alignment only shifts the
+shorter lines under the longest one and a one-line title has nowhere to go —
+`Column to frame` gives it a column, and Align under Transform moves the whole
+block instead.
 
 **Pan** — the thing zoom-and-pan tools do badly. Set point **A**, set point
 **B**, choose how long the move takes and which easing it uses, and the image
@@ -234,6 +253,7 @@ it is still looking for.
 | `Alt` + wheel, or the wheel over the track heads | scroll the tracks up / down |
 | `Ctrl` + wheel | zoom the timeline around the pointer |
 | `Shift` while dragging | constrain to one axis |
+| `Alt` while dragging on the frame | ignore the alignment guides |
 | right-click a track head | delete that track |
 | drag the ruler or empty track space | scrub the playhead |
 
@@ -251,6 +271,14 @@ each source pixel landed on exactly one canvas pixel — plus fades, splitting,
 undo, pan interpolation, track stacking, text and its shadow, the visualiser
 spectrum, the offline audio mixdown, a still export, and a real mouse drag
 through empty track space to check scrubbing and playhead snapping.
+
+Composition is driven the same way: a title is dragged across the frame with a
+real pointer and has to land *exactly* on the centre line, flush against a frame
+edge, and free of both when `Alt` is down — including with a rival clip edge a
+pixel nearer and whole-pixel snapping on, the two cases that quietly pull a box
+back off the line it caught. Text alignment is checked as geometry rather than
+pixels: a wrap width has to hold the block open as a column, and left / centre /
+right have to move the lines inside it.
 
 Relinking is covered end to end: a project whose media sits in two different
 folders is reopened with nothing loaded, then relinked one folder at a time
@@ -270,6 +298,7 @@ src/js/
   playback.js       transport clock and video element sync
   timeline.js       tracks, clips, trimming, fades, snapping, scrubbing
   preview.js        stage, selection handles, dragging on the frame
+  snap.js           alignment guides for dragging on the frame
   inspector.js      properties panel
   library.js        media pool, text and visualiser presets
   exporter.js       PNG sequence / WebM / still

@@ -747,6 +747,189 @@ const restored = await page.evaluate(async () => {
 ok('a failed export takes softening back off the shared renderer',
   restored.threw && restored.softness === 0, JSON.stringify(restored));
 
+// --- composing on the frame ------------------------------------------------
+// Dragging a title by eye never lands it on the centre line, so the drag pulls
+// the box onto the frame's own guides. Drive it with a real pointer and check
+// where the clip ended up, not what the snapping maths says in isolation.
+const stage = await page.evaluate(async () => {
+  const { store, timeline, preview, playback } = window.videdit;
+  const { makeClip } = await import('/src/js/store.js');
+  store.project.tracks.forEach((t) => (t.clips.length = 0));
+  const txt = makeClip('text', { name: 'Title', duration: 6 });
+  txt.text.content = 'CENTRE ME';
+  txt.text.size = 90;
+  txt.pixelSnap = false;
+  timeline.insert(txt, 'video', 0);
+  store.select([txt.id]);
+  playback.seek(1);
+  store.changed();
+  const r = preview.canvas.getBoundingClientRect();
+  return { id: txt.id, left: r.left, top: r.top, z: preview.z, w: store.project.width, h: store.project.height };
+});
+const clipXY = () => page.evaluate((id) => {
+  const c = window.videdit.store.allClips().find((k) => k.id === id);
+  return { x: c.x, y: c.y };
+}, stage.id);
+// Canvas centre in client coords, plus a few screen px of deliberate error.
+const onCanvas = (cx, cy) => ({ x: stage.left + cx * stage.z, y: stage.top + cy * stage.z });
+
+const start = onCanvas(stage.w / 2, stage.h / 2);
+await page.mouse.move(start.x, start.y);
+await page.mouse.down();
+await page.mouse.move(start.x + 40, start.y + 40, { steps: 4 });
+await page.mouse.move(start.x + 4, start.y + 3, { steps: 4 });
+const snappedXY = await clipXY();
+const lines = await page.evaluate(() => window.videdit.preview.snapLines.map((l) => `${l.axis}:${l.kind}`).sort());
+await page.mouse.up();
+ok('a drag near the centre lands exactly on it',
+  Math.abs(snappedXY.x) < 1e-6 && Math.abs(snappedXY.y) < 1e-6, JSON.stringify(snappedXY));
+ok('and says which guides it caught',
+  lines.join(',') === 'x:center,y:center', lines.join(','));
+ok('the guides clear when the drag ends',
+  (await page.evaluate(() => window.videdit.preview.snapLines.length)) === 0);
+
+// Alt is the escape hatch: the same sloppy drag, left exactly where it was put.
+await page.keyboard.down('Alt');
+await page.mouse.move(start.x, start.y);
+await page.mouse.down();
+await page.mouse.move(start.x + 40, start.y + 40, { steps: 4 });
+await page.mouse.move(start.x + 4, start.y + 3, { steps: 4 });
+const freeXY = await clipXY();
+await page.mouse.up();
+await page.keyboard.up('Alt');
+ok('alt drags free of the guides',
+  Math.abs(freeXY.x - 4 / stage.z) < 0.01 && Math.abs(freeXY.y - 3 / stage.z) < 0.01, JSON.stringify(freeXY));
+
+// The box edges snap too, not just its centre — that is what puts a lower
+// third flush against the left of the frame.
+const aim = await page.evaluate((id) => {
+  const { store, renderer, preview } = window.videdit;
+  const clip = store.allClips().find((k) => k.id === id);
+  clip.x = 0;
+  clip.y = 0;
+  store.changed();
+  const box = renderer.boxFor(clip, 1);
+  // screen px to drag so the left edge stops 4 canvas px short of the frame edge
+  return { dx: (4 - box.left) * preview.z, w: box.w };
+}, stage.id);
+await page.mouse.move(start.x, start.y);
+await page.mouse.down();
+await page.mouse.move(start.x + aim.dx, start.y, { steps: 6 });
+const edgeLeft = await page.evaluate((id) => {
+  const { store, renderer } = window.videdit;
+  return renderer.boxFor(store.allClips().find((k) => k.id === id), 1).left;
+}, stage.id);
+await page.mouse.up();
+ok('a box edge snaps flush to the frame edge', Math.abs(edgeLeft) < 1e-6,
+  `left edge at ${edgeLeft}, box ${Math.round(aim.w)} px wide`);
+
+// Two things that quietly break this: a neighbouring clip whose edge happens to
+// be a pixel nearer than the centre line, and "snap to whole pixels" rounding
+// the delta after the guide has already placed the box. Set up both at once —
+// a second title of a different width, sitting dead centre, with pixel snap on.
+const crowded = await page.evaluate(async (id) => {
+  const { store, timeline, renderer } = window.videdit;
+  const { makeClip } = await import('/src/js/store.js');
+  const mine = store.allClips().find((k) => k.id === id);
+  mine.x = 0;
+  mine.y = 0;
+  mine.pixelSnap = true;
+  const other = makeClip('text', { name: 'Other', duration: 6 });
+  other.text.content = 'ALREADY HERE';
+  // a hair narrower, and centred, so its left edge sits just inside mine
+  other.text.maxWidth = renderer.boxFor(mine, 1, { snapPixels: false }).w - 4;
+  timeline.insert(other, 'video', 1);
+  store.select([mine.id]);
+  store.changed();
+  const a = renderer.boxFor(mine, 1, { snapPixels: false });
+  const b = renderer.boxFor(other, 1, { snapPixels: false });
+  // the two left edges land within a couple of px of each other, which is
+  // exactly the case where nearest-wins picks the wrong guide
+  return { apart: Math.abs(a.left - b.left) };
+}, stage.id);
+await page.mouse.move(start.x, start.y);
+await page.mouse.down();
+await page.mouse.move(start.x + 40, start.y + 40, { steps: 4 });
+await page.mouse.move(start.x + 3, start.y + 2, { steps: 4 });
+const crowdedXY = await clipXY();
+const crowdedLines = await page.evaluate(() => window.videdit.preview.snapLines.map((l) => `${l.axis}:${l.kind}`));
+await page.mouse.up();
+ok('the frame centre outranks a neighbour a hair closer',
+  crowded.apart < 6 && crowdedLines.includes('x:center'), `${crowded.apart.toFixed(2)} px apart, caught ${crowdedLines}`);
+ok('whole-pixel snapping does not drag it back off the line',
+  Math.abs(crowdedXY.x) < 1e-6 && Math.abs(crowdedXY.y) < 1e-6, JSON.stringify(crowdedXY));
+
+// --- text alignment --------------------------------------------------------
+// Align ranges the lines inside the text block. With no wrap width that block
+// is exactly as wide as the longest line, which is why align looked dead on a
+// one-line title; a wrap width turns it into a column with somewhere to go.
+const align = await page.evaluate((id) => {
+  const { store, renderer } = window.videdit;
+  const clip = store.allClips().find((k) => k.id === id);
+  const ts = clip.text;
+  ts.content = 'ONE\nTWO LINES HERE';
+  ts.maxWidth = 0;
+  const hug = renderer.measureText(clip).width;
+  // where the short first line starts, per alignment
+  const firstLineX = () => {
+    const m = renderer.measureText(clip);
+    const lw = m.layout.widths[0];
+    if (ts.align === 'center') return (m.width - lw) / 2;
+    if (ts.align === 'right') return m.width - m.pad.x - lw;
+    return m.pad.x;
+  };
+  const out = { hug, block: {}, shortLine: {} };
+  ts.maxWidth = 900;
+  for (const a of ['left', 'center', 'right']) {
+    ts.align = a;
+    out.block[a] = renderer.measureText(clip).width;
+    out.shortLine[a] = firstLineX();
+  }
+  ts.maxWidth = 0;
+  ts.align = 'center';
+  out.hugAgain = renderer.measureText(clip).width;
+  // A single line in a column still has three distinct places to sit.
+  ts.content = 'ONE';
+  ts.maxWidth = 900;
+  out.single = {};
+  for (const a of ['left', 'center', 'right']) {
+    ts.align = a;
+    out.single[a] = firstLineX();
+  }
+  return out;
+}, stage.id);
+ok('a wrap width is a column, not just a limit',
+  align.block.left === 900 && align.block.center === 900 && align.block.right === 900
+  && align.hug < 900 && align.hugAgain === align.hug, JSON.stringify(align.block));
+ok('align moves the lines inside that column',
+  align.shortLine.left === 0 && align.shortLine.center > 300 && align.shortLine.right > align.shortLine.center * 1.8,
+  JSON.stringify(align.shortLine));
+ok('a one-line title aligns too, once it has a column',
+  align.single.left === 0 && align.single.center > 300 && align.single.right > align.single.center * 1.8,
+  JSON.stringify(align.single));
+
+// Align-to-frame is the other half of the fix: it moves the whole block.
+const toFrame = await page.evaluate((id) => {
+  const { store, inspector, renderer } = window.videdit;
+  const clip = store.allClips().find((k) => k.id === id);
+  store.select([clip.id]);
+  const seen = {};
+  for (const [axis, where, key] of [['x', 'start', 'left'], ['x', 'end', 'right'], ['y', 'start', 'top'], ['y', 'end', 'bottom']]) {
+    inspector.alignToFrame(clip, axis, where);
+    const b = renderer.boxFor(clip, 1);
+    seen[key] = key === 'left' ? b.left : key === 'right' ? b.left + b.w - store.project.width
+      : key === 'top' ? b.top : b.top + b.h - store.project.height;
+  }
+  inspector.alignToFrame(clip, 'x', 'center');
+  inspector.alignToFrame(clip, 'y', 'center');
+  const c = renderer.boxFor(clip, 1);
+  seen.centred = [c.cx - store.project.width / 2, c.cy - store.project.height / 2];
+  return seen;
+}, stage.id);
+ok('align to frame puts the box on each edge',
+  ['left', 'right', 'top', 'bottom'].every((k) => Math.abs(toFrame[k]) < 1e-6)
+  && toFrame.centred.every((v) => Math.abs(v) < 1e-6), JSON.stringify(toFrame));
+
 ok('no console errors', errors.length === 0, errors.join(' | '));
 
 await browser.close();
