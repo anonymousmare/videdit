@@ -138,18 +138,24 @@ export class Playback {
     return out;
   }
 
-  /**
-   * Where in the source a timeline instant sits — sampled at the CENTRE of the
-   * output frame, never on its edge. `t` is always a multiple of 1/fps, so when
-   * the source runs at the project frame rate every seek would land exactly on
-   * a source frame boundary, and which side of that boundary you get comes down
-   * to float rounding. The result is that some source frames get captured twice
-   * and others never: invisible on a locked-off shot, obvious judder on a pan.
-   * Half a frame in, the frame under the playhead is the only candidate.
-   */
+  /** Where in the source media the timeline instant `t` falls. */
   sourceTimeOf(clip, t) {
-    const half = 0.5 / (this.store.project.fps || 30);
-    return clip.inPoint + (Math.max(0, t - clip.start) + half) * (clip.speed || 1);
+    return clip.inPoint + Math.max(0, t - clip.start) * (clip.speed || 1);
+  }
+
+  /**
+   * The instant that stands for the output frame containing `t`: its centre,
+   * never its edge.
+   *
+   * Frame times are multiples of 1/fps, so a seek to one lands exactly on a
+   * source frame boundary whenever the source runs at the project rate — and
+   * which side of that boundary you get comes down to float rounding. Some
+   * source frames then get captured twice and others never. Half a frame in,
+   * the frame under the playhead is the only candidate.
+   */
+  frameCentre(t) {
+    const fps = this.store.project.fps || 30;
+    return (Math.floor(t * fps + 1e-6) + 0.5) / fps;
   }
 
   primeVideos(t) {
@@ -187,7 +193,9 @@ export class Playback {
           if (!v.paused) v.pause();
           continue;
         }
-        const want = this.sourceTimeOf(clip, t);
+        // While playing, follow the clock. Parked, show the frame the export
+        // would write for this position rather than whatever sits on the edge.
+        const want = this.sourceTimeOf(clip, this.playing ? t : this.frameCentre(t));
         const drift = Math.abs(v.currentTime - want);
         if (hard || drift > 0.18) {
           try {
