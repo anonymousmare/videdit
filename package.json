@@ -1,0 +1,16 @@
+{
+  "name": "videdit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A pixel-perfect, dark-theme video editor for trailers built from screenshots.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node test/smoke.mjs",
+    "fixtures": "node test/fixtures.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
