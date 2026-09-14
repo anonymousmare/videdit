@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>videdit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="src/css/app.css" />
+</head>
+<body>
+<div class="app" id="app">
+
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span>videdit <small>pixel-perfect cut</small></div>
+    <span class="sep"></span>
+    <input class="proj-name" id="projName" value="Untitled trailer" spellcheck="false" />
+    <span class="sep"></span>
+    <button class="btn icon ghost" id="btnUndo" data-icon="undo" data-tip="Undo  Ctrl+Z"></button>
+    <button class="btn icon ghost" id="btnRedo" data-icon="redo" data-tip="Redo  Ctrl+Shift+Z"></button>
+    <span class="sep"></span>
+    <button class="btn ghost" id="btnSplit" data-icon="scissors" data-tip="Split at playhead  S">Split</button>
+    <button class="btn icon ghost" id="btnDupe" data-icon="duplicate" data-tip="Duplicate  Ctrl+D"></button>
+    <button class="btn icon ghost danger" id="btnDelete" data-icon="trash" data-tip="Delete  Del"></button>
+    <div class="spacer"></div>
+    <button class="btn ghost" id="btnCanvas" data-icon="grid" data-tip="Canvas size & frame rate">1024 &times; 1024</button>
+    <span class="sep"></span>
+    <button class="btn icon ghost" id="btnOpen" data-icon="open" data-tip="Open project (.videdit.json)"></button>
+    <button class="btn icon ghost" id="btnSave" data-icon="save" data-tip="Save project (.videdit.json)"></button>
+    <button class="btn icon ghost" id="btnHelp" data-icon="info" data-tip="Keyboard shortcuts"></button>
+    <button class="btn primary" id="btnExport" data-icon="download">Export</button>
+  </header>
+
+  <div class="main">
+    <!-- ------------------------------------------------- left: library -->
+    <aside class="panel left">
+      <div class="tabs" id="leftTabs">
+        <button class="tab active" data-tab="media"><span data-icon="folder" data-icon-size="18"></span>Media</button>
+        <button class="tab" data-tab="text"><span data-icon="type" data-icon-size="18"></span>Text</button>
+        <button class="tab" data-tab="audio"><span data-icon="waveform" data-icon-size="18"></span>Visualiser</button>
+      </div>
+      <div class="panel-body" id="leftBody"></div>
+    </aside>
+
+    <!-- ------------------------------------------------- centre: preview -->
+    <section class="stage">
+      <div class="stage-view" id="stageView">
+        <div class="canvas-wrap" id="canvasWrap">
+          <canvas id="preview" width="1024" height="1024"></canvas>
+          <canvas id="overlay"></canvas>
+        </div>
+        <div class="stage-hint" id="stageHint">Drag on the frame to move a clip &middot; Shift drags on one axis</div>
+      </div>
+      <div class="transport">
+        <button class="btn icon ghost tip-up" id="btnStart" data-icon="skipStart" data-tip="Start  Home"></button>
+        <button class="btn icon ghost tip-up" id="btnPrev" data-icon="stepBack" data-tip="Previous frame  ,"></button>
+        <button class="btn icon tip-up" id="btnPlay" data-icon="play" data-tip="Play / pause  Space"></button>
+        <button class="btn icon ghost tip-up" id="btnNext" data-icon="stepFwd" data-tip="Next frame  ."></button>
+        <button class="btn icon ghost tip-up" id="btnEnd" data-icon="skipEnd" data-tip="End  End"></button>
+        <span class="sep"></span>
+        <div class="tc"><span class="now" id="tcNow">00:00:00</span> <span class="tot" id="tcTot">/ 00:00:00</span></div>
+        <button class="btn icon ghost tip-up" id="btnLoop" data-icon="refresh" data-tip="Loop playback"></button>
+        <div class="spacer"></div>
+        <button class="btn icon ghost tip-up" id="btnMute" data-icon="volume" data-tip="Mute preview"></button>
+        <input type="range" class="slider" id="volume" min="0" max="1" step="0.01" value="1" style="width:88px" />
+        <span class="sep"></span>
+        <div class="zoom-pill">
+          <span data-icon="maximize" data-icon-size="13" style="color:var(--text-mute)"></span>
+          <select id="zoomSel" title="Preview zoom">
+            <option value="fit">Fit</option>
+            <option value="0.25">25%</option>
+            <option value="0.5">50%</option>
+            <option value="1">100%</option>
+            <option value="2">200%</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------- right: inspector -->
+    <aside class="panel right">
+      <div class="panel-head"><span data-icon="sliders" data-icon-size="13"></span> Properties</div>
+      <div class="panel-body" id="inspector" style="padding:0"></div>
+    </aside>
+  </div>
+
+  <div class="vsplit" id="vsplit" title="Drag to resize the timeline"></div>
+
+  <!-- ------------------------------------------------- timeline -->
+  <section class="timeline">
+    <div class="tl-bar">
+      <button class="btn sm icon tip-up" id="tlSplit" data-icon="scissors" data-tip="Split at playhead  S"></button>
+      <button class="btn sm icon tip-up" id="tlDelete" data-icon="trash" data-tip="Delete selected  Del"></button>
+      <button class="btn sm icon tip-up" id="tlDupe" data-icon="duplicate" data-tip="Duplicate  Ctrl+D"></button>
+      <span class="sep"></span>
+      <button class="btn sm tip-up" id="tlAddV" data-icon="layers" data-tip="Add a video track">Video track</button>
+      <button class="btn sm tip-up" id="tlAddA" data-icon="music" data-tip="Add an audio track">Audio track</button>
+      <span class="sep"></span>
+      <button class="btn sm icon on tip-up" id="tlSnap" data-icon="magnet" data-tip="Snapping"></button>
+      <div class="spacer"></div>
+      <button class="btn sm icon tip-up" id="tlZoomOut" data-icon="zoomOut" data-tip="Zoom out  -"></button>
+      <input type="range" class="slider" id="tlZoom" min="8" max="900" step="1" value="90" style="width:130px" />
+      <button class="btn sm icon tip-up" id="tlZoomIn" data-icon="zoomIn" data-tip="Zoom in  +"></button>
+      <button class="btn sm icon tip-up" id="tlFit" data-icon="maximize" data-tip="Fit timeline  Shift+Z"></button>
+    </div>
+    <div class="tl-scroll" id="tlScroll">
+      <div class="tl-grid" id="tlGrid">
+        <div class="tl-corner">Tracks</div>
+        <div class="ruler" id="ruler"><canvas id="rulerCanvas"></canvas></div>
+        <div class="tl-heads" id="tlHeads"></div>
+        <div class="tl-lanes" id="tlLanes">
+          <div class="playhead" id="playhead"></div>
+          <div class="snapline" id="snapline" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<input type="file" id="filePicker" multiple accept="image/*,video/*,audio/*" hidden />
+<input type="file" id="projPicker" accept=".json,application/json" hidden />
+
+<script type="module" src="src/js/main.js"></script>
+</body>
+</html>
