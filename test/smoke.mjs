@@ -601,6 +601,53 @@ ok('the shutter opens across the frame and closes to one instant when off',
   && shutter.span > 0.4 && shutter.span < 0.5,
   JSON.stringify(shutter));
 
+// An exposure is an integral of light, so it has to be averaged in linear light.
+// Compute both candidate models here, independently of the exporter, and check
+// which one it actually matches — averaging the bytes is the tempting wrong one.
+const gamma = await page.evaluate(async () => {
+  const { store, exporter, renderer } = window.videdit;
+  const clip = store.allClips().find((c) => c.type === 'image');
+  // The two models only diverge where samples span a wide range, so the scene
+  // has to have a hard edge sweeping through the exposure: shrink the image so
+  // black background shows, and pan it fast enough to move 10 px per frame.
+  Object.assign(clip.motion, { enabled: true, easing: 'linear',
+    from: { x: -900, y: 0, scale: 0.3 }, to: { x: 900, y: 0, scale: 0.3 } });
+  store.changed();
+  const fps = store.project.fps;
+  const f = 60;
+  const times = exporter.shutterSamples(f, fps, 8, 0.5);
+  const W = renderer.canvas.width;
+  const H = renderer.canvas.height;
+  const toLight = (b) => { const c = b / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const toByte = (c) => Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055));
+
+  const light = new Float64Array(W * H * 4);
+  const bytes = new Float64Array(W * H * 4);
+  for (const t of times) {
+    await exporter.prepareFrame(t);
+    renderer.render(t);
+    const px = renderer.ctx.getImageData(0, 0, W, H).data;
+    for (let i = 0; i < px.length; i++) {
+      light[i] += toLight(px[i]) / times.length;
+      bytes[i] += px[i] / times.length;
+    }
+  }
+  await exporter.composeFrame(times);
+  const got = renderer.ctx.getImageData(0, 0, W, H).data;
+  let offLight = 0, offBytes = 0, apart = 0;
+  for (let i = 0; i < got.length; i++) {
+    if (i % 4 === 3) continue;
+    offLight = Math.max(offLight, Math.abs(got[i] - toByte(light[i])));
+    offBytes = Math.max(offBytes, Math.abs(got[i] - Math.round(bytes[i])));
+    apart = Math.max(apart, Math.abs(toByte(light[i]) - Math.round(bytes[i])));
+  }
+  clip.motion.enabled = false;
+  store.changed();
+  return { offLight, offBytes, apart };
+});
+ok('the shutter is averaged in linear light, not in sRGB bytes',
+  gamma.offLight <= 2 && gamma.apart > 20 && gamma.offBytes > 20, JSON.stringify(gamma));
+
 ok('no console errors', errors.length === 0, errors.join(' | '));
 
 await browser.close();

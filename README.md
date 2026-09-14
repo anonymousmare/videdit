@@ -129,9 +129,12 @@ freezing one instant, the way a camera does. 180° is the film standard and the
 default; 90° is crisper and strobes more; 360° smears the most. The number of
 samples follows how fast the frame is actually moving, keeping them under a
 pixel apart, because what makes a smear look like a smear rather than a stack of
-ghosts is the gap between samples, not how many there are. Only frames with
-something moving pay for any of it, so a static trailer exports as fast as it
-ever did.
+ghosts is the gap between samples, not how many there are. The averaging happens
+in linear light rather than on sRGB bytes — a shutter integrates photons, and
+byte 128 is about 22% of the light of byte 255, not half — without which a
+bright title crossing black smears out roughly 60 levels too dark. Only frames
+with something moving pay for any of it, so a static trailer exports as fast as
+it ever did.
 
 One trade comes with this: a clip that is moving is drawn at subpixel positions
 and resampled, so it softens very slightly while it travels. A clip that is

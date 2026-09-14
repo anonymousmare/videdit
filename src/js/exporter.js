@@ -16,6 +16,27 @@ import { clipEnd, hasMotion } from './store.js';
 import { ZipWriter } from './zip.js';
 import { getCtx } from './media.js';
 
+/**
+ * sRGB is a storage curve, not a measure of light: byte 128 carries about 22% of
+ * the light of byte 255, not half of it. A shutter integrates photons, so the
+ * samples of an exposure have to be averaged in linear light and converted back
+ * afterwards. Averaged as raw bytes instead, every smear comes out far darker
+ * than the thing that cast it — half a frame of white over black gives 128 where
+ * the light says 188 — and that is exactly where a trailer lives: a bright title
+ * travelling across black.
+ */
+const TO_LIGHT = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  const c = i / 255;
+  TO_LIGHT[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+// Back the other way, off a table because the curve is too slow to run per pixel.
+const TO_BYTE = new Uint8ClampedArray(4096);
+for (let i = 0; i < 4096; i++) {
+  const c = i / 4095;
+  TO_BYTE[i] = Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055));
+}
+
 const CODECS = [
   ['video/webm;codecs=vp9,opus', 'WebM · VP9'],
   ['video/webm;codecs=vp8,opus', 'WebM · VP8'],
@@ -310,10 +331,20 @@ export class Exporter {
     for (const t of times) {
       this.renderer.render(t);
       const px = ctx.getImageData(0, 0, w, h).data;
-      for (let i = 0; i < acc.length; i++) acc[i] += px[i];
+      for (let i = 0; i < acc.length; i += 4) {
+        acc[i] += TO_LIGHT[px[i]];
+        acc[i + 1] += TO_LIGHT[px[i + 1]];
+        acc[i + 2] += TO_LIGHT[px[i + 2]];
+      }
     }
     const out = ctx.createImageData(w, h);
-    for (let i = 0; i < acc.length; i++) out.data[i] = acc[i] / times.length;
+    const scale = 4095 / times.length;
+    for (let i = 0; i < acc.length; i += 4) {
+      out.data[i] = TO_BYTE[(acc[i] * scale) | 0];
+      out.data[i + 1] = TO_BYTE[(acc[i + 1] * scale) | 0];
+      out.data[i + 2] = TO_BYTE[(acc[i + 2] * scale) | 0];
+      out.data[i + 3] = 255;
+    }
     ctx.putImageData(out, 0, 0);
   }
 
