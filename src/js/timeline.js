@@ -170,6 +170,14 @@ export class Timeline {
       style: { '--c': CLIP_COLORS[clip.type] || 'var(--clip-image)' },
     });
     node.append(el('div', { class: 'fill' }));
+    // An unresolvable assetId means the media is offline: say so on the clip
+    // rather than leaving a blank block that looks like a broken render.
+    if (clip.assetId && !this.media.get(clip.assetId)) {
+      node.classList.add('offline');
+      const badge = el('div', { class: 'offline-badge', title: 'Media offline — relink it from the Media panel' });
+      badge.append(icon('info', 10));
+      node.append(badge);
+    }
     if (clip.type === 'image' || clip.type === 'video') {
       const asset = this.media.get(clip.assetId);
       if (asset?.thumb) {

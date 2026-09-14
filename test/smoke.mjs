@@ -257,6 +257,135 @@ const copies = await page.evaluate(async () => {
 });
 ok('dropping a file imports it once', copies === 1, `${copies} copies`);
 
+// Relinking: a project whose media sits in two different folders. One picker
+// can only ever reach one of them, so the session has to survive round after
+// round — and it must never bind a file that merely happens to be the right
+// kind.
+let chooserFiles = [];
+page.on('filechooser', async (fc) => {
+  try {
+    await fc.setFiles(chooserFiles);
+  } catch { /* the test moved on */ }
+});
+
+const opened = await page.evaluate(async () => {
+  const { store, media, timeline, relinker } = window.videdit;
+  store.project.tracks.forEach((t) => (t.clips.length = 0));
+  const img = media.list().find((a) => a.kind === 'image' && a.name === 'shot.png');
+  const aud = media.list().find((a) => a.kind === 'audio');
+  timeline.appendAsset(img.id, 0);
+  timeline.appendAsset(aud.id, 0);
+  const wanted = [img, aud].map((a) => ({ id: a.id, name: a.name, kind: a.kind, size: a.size, path: `old/${a.name}` }));
+  // Reopening the project on another machine: the clips stay, the media does not.
+  for (const a of media.list()) media.remove(a.id);
+  await relinker.begin(wanted);
+  return {
+    missing: relinker.missing().length,
+    dialog: !!document.querySelector('.modal.relink'),
+    rows: document.querySelectorAll('.relink-row.missing').length,
+    offlineClips: document.querySelectorAll('.clip.offline').length,
+    banner: !!document.querySelector('.offline-banner'),
+  };
+});
+ok('reopening without media opens the relink dialog', opened.missing === 2 && opened.dialog && opened.rows === 2,
+  JSON.stringify(opened));
+ok('offline clips are marked on the timeline', opened.offlineClips === 2 && opened.banner,
+  `${opened.offlineClips} clips, banner ${opened.banner}`);
+
+// A file of the right kind but the wrong name must not be guessed at.
+chooserFiles = [join(DIR, 'small.png')];
+const wrong = await page.evaluate(async () => {
+  await window.videdit.relinker.addFiles();
+  return window.videdit.relinker.missing().length;
+});
+ok('an unrelated file of the same kind is not linked', wrong === 2, `${wrong} still missing`);
+
+chooserFiles = [join(DIR, 'folderA', 'Shot.png')];
+const first = await page.evaluate(async () => {
+  const n = await window.videdit.relinker.addFiles();
+  return { n, missing: window.videdit.relinker.missing().length };
+});
+ok('the first folder relinks its file', first.n === 1 && first.missing === 1, JSON.stringify(first));
+
+chooserFiles = [join(DIR, 'folderB', 'tone.wav')];
+const second = await page.evaluate(async () => {
+  const n = await window.videdit.relinker.addFiles();
+  const { store, media } = window.videdit;
+  const clips = store.allClips();
+  return {
+    n,
+    missing: window.videdit.relinker.missing().length,
+    resolved: clips.filter((c) => c.assetId && media.get(c.assetId)).length,
+    assets: media.list().length,
+  };
+});
+ok('a second folder relinks the rest in the same session', second.n === 1 && second.missing === 0,
+  JSON.stringify(second));
+ok('every clip points at real media again', second.resolved === 2, `${second.resolved} of 2`);
+// Two relinked files and nothing else: the unmatched small.png offered earlier
+// was never read, and neither file was imported twice.
+ok('only matched files are imported', second.assets === 2, `${second.assets} assets`);
+
+const cleared = await page.evaluate(async () => {
+  await new Promise((r) => setTimeout(r, 900));
+  return { dialog: !!document.querySelector('.modal.relink'), offline: document.querySelectorAll('.clip.offline').length };
+});
+ok('the dialog closes once nothing is missing', !cleared.dialog && cleared.offline === 0, JSON.stringify(cleared));
+
+// The folder machinery itself: a picked directory handle and a dropped folder
+// both reach the matcher as flat, path-carrying entries. Neither can be driven
+// through a native dialog in a headless run, so both walkers get fed mocks.
+const walkers = await page.evaluate(async () => {
+  const f = await import('/src/js/folders.js');
+  const fileHandle = (name) => ({ kind: 'file', name, getFile: async () => new File([name], name) });
+  const dir = (name, kids) => ({ kind: 'directory', name, async *entries() { for (const k of kids) yield [k.name, k]; } });
+  const tree = dir('media', [
+    fileHandle('a.png'),
+    fileHandle('notes.txt'),          // not media
+    fileHandle('.hidden.png'),        // dotfile
+    dir('music', [fileHandle('b.wav')]),
+    dir('node_modules', [fileHandle('junk.png')]),
+  ]);
+  const scanned = await f.scanFolder(tree);
+
+  // Dropped folders come through the older entry API, whose reader pages.
+  const fileEntry = (name) => ({ isFile: true, name, file: (cb) => cb(new File([name], name)) });
+  const dirEntry = (name, kids) => ({
+    isDirectory: true,
+    name,
+    createReader() {
+      let sent = false;
+      return { readEntries: (cb) => { cb(sent ? [] : kids); sent = true; } };
+    },
+  });
+  const root = dirEntry('shots', [fileEntry('c.png'), dirEntry('sub', [fileEntry('d.mp4')])]);
+  const dropped = await f.scanDataTransfer({ items: [{ kind: 'file', webkitGetAsEntry: () => root }], files: [] });
+  return { scanned: scanned.map((e) => e.path).sort(), dropped: dropped.map((e) => e.path).sort() };
+});
+ok('a picked folder is walked into media entries, junk skipped',
+  JSON.stringify(walkers.scanned) === JSON.stringify(['media/a.png', 'media/music/b.wav']),
+  JSON.stringify(walkers.scanned));
+ok('a dropped folder is walked recursively',
+  JSON.stringify(walkers.dropped) === JSON.stringify(['shots/c.png', 'shots/sub/d.mp4']),
+  JSON.stringify(walkers.dropped));
+
+const remembered = await page.evaluate(async () => {
+  const f = await import('/src/js/folders.js');
+  if (!window.showDirectoryPicker) window.showDirectoryPicker = () => {}; // only gates canRemember()
+  // A stand-in handle has to be structured-cloneable, just like the real one;
+  // with no isSameEntry the store falls back to comparing folder names.
+  const handle = { name: 'Footage' };
+  const row = await f.rememberFolder(handle);
+  const once = (await f.rememberedFolders()).filter((r) => r.name === 'Footage').length;
+  await f.rememberFolder(handle); // the same folder again must not store a twin
+  const twice = (await f.rememberedFolders()).filter((r) => r.name === 'Footage').length;
+  await f.forgetFolder(row.key);
+  const after = (await f.rememberedFolders()).filter((r) => r.name === 'Footage').length;
+  return { once, twice, after };
+});
+ok('folders are remembered once and can be forgotten',
+  remembered.once === 1 && remembered.twice === 1 && remembered.after === 0, JSON.stringify(remembered));
+
 ok('no console errors', errors.length === 0, errors.join(' | '));
 
 await browser.close();

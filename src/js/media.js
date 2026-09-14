@@ -65,13 +65,19 @@ export class MediaLibrary {
       }
     }
     this.bus.emit('change');
+    // Relinking listens here, so every import route — toolbar, drop, the
+    // relink dialog — can reconnect a missing clip without extra wiring.
+    if (out.length) this.bus.emit('imported', out);
     return out;
   }
 
-  async importFile(file, kind = kindOf(file)) {
+  async importFile(file, kind = kindOf(file), meta = {}) {
     const asset = {
       id: uid('asset'),
       name: file.name,
+      // Where it came from, when the browser tells us: a folder-relative path
+      // is what tells two identically named files in two folders apart.
+      path: meta.path || file.webkitRelativePath || '',
       kind,
       file,
       url: URL.createObjectURL(file),
@@ -99,6 +105,13 @@ export class MediaLibrary {
         .catch(() => {});
     }
     return asset;
+  }
+
+  /** An already-imported asset for the same file, so relinking never duplicates. */
+  findSame(file) {
+    const kind = kindOf(file);
+    return this.list().find((a) => a.name === file.name && a.kind === kind
+      && (!a.size || !file.size || a.size === file.size)) || null;
   }
 
   remove(id) {

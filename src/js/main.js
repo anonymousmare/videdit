@@ -10,6 +10,7 @@ import { Preview } from './preview.js';
 import { Inspector } from './inspector.js';
 import { Library } from './library.js';
 import { Exporter } from './exporter.js';
+import { Relinker, describeAsset } from './relink.js';
 import { icon, hydrateIcons } from './icons.js';
 import { clamp, download, el, fmtTime, drag, deepClone, uid } from './util.js';
 
@@ -23,10 +24,11 @@ const renderer = new Renderer({
   spectrum: (t, clip) => audio.spectrumAt(t, clip),
 });
 const playback = new Playback(store, media, renderer, audio);
+const relinker = new Relinker({ store, media, playback });
 const timeline = new Timeline({ store, media, playback });
 const preview = new Preview({ store, media, renderer, playback });
 const inspector = new Inspector({ store, media, renderer, playback, timeline });
-const library = new Library({ store, media, timeline, playback });
+const library = new Library({ store, media, timeline, playback, relinker });
 const exporter = new Exporter({ store, media, renderer, playback, audio });
 
 const $ = (id) => document.getElementById(id);
@@ -170,24 +172,21 @@ $('filePicker').addEventListener('change', async (e) => {
   if (!files.length) return;
   const added = await media.importFiles(files);
   if (added.length) toast(`Imported ${added.length} file${added.length > 1 ? 's' : ''}`);
-  if (pendingRelink) relink(added);
 });
 
 // ------------------------------------------------------------------ project I/O
 $('btnSave').addEventListener('click', () => {
+  // Missing media is saved too: a project half-relinked would otherwise forget
+  // the names of the files it is still looking for, and never find them again.
+  const assets = media.list().map(describeAsset);
+  const known = new Set(assets.map((a) => a.id));
+  for (const want of relinker.missing()) if (!known.has(want.id)) assets.push(want);
   const payload = {
     format: 'videdit-project',
-    version: 1,
+    version: 2,
     savedAt: new Date().toISOString(),
     project: store.project,
-    assets: media.list().map((a) => ({
-      id: a.id,
-      name: a.name,
-      kind: a.kind,
-      width: a.width,
-      height: a.height,
-      duration: a.duration,
-    })),
+    assets,
   };
   download(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
     `${(store.project.name || 'project').replace(/[^\w\-]+/g, '_')}.videdit.json`);
@@ -195,7 +194,6 @@ $('btnSave').addEventListener('click', () => {
   toast('Project saved. Media files are referenced by name, not embedded.');
 });
 
-let pendingRelink = null;
 $('btnOpen').addEventListener('click', () => $('projPicker').click());
 $('projPicker').addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -214,14 +212,15 @@ $('projPicker').addEventListener('change', async (e) => {
     store.emit('selection');
     store.emit('seek', 0);
     timeline.fit();
-    const needed = (data.assets || []).filter((a) => usedAssetIds().has(a.id));
-    if (needed.length) {
-      pendingRelink = needed;
-      toast(`Select the ${needed.length} media file(s) to relink`);
-      setTimeout(() => $('filePicker').click(), 350);
-    } else {
+    const needed = (data.assets || []).filter((a) => usedAssetIds().has(a.id) && !media.get(a.id));
+    if (!needed.length) {
       toast('Project opened');
+      return;
     }
+    // Remembered folders are searched first; the dialog only appears for what
+    // they could not find, and stays open across as many folders as it takes.
+    const res = await relinker.begin(needed);
+    if (res.auto && !res.linked) toast('Project opened');
   } catch (err) {
     toast(`Could not open: ${err.message}`, 'err');
   }
@@ -229,26 +228,13 @@ $('projPicker').addEventListener('change', async (e) => {
 
 function usedAssetIds() {
   const s = new Set();
-  for (const t of store.project.tracks) for (const c of t.clips) if (c.assetId) s.add(c.assetId);
-  return s;
-}
-
-function relink(added) {
-  const wanted = pendingRelink;
-  pendingRelink = null;
-  if (!wanted) return;
-  let n = 0;
-  for (const w of wanted) {
-    const match = added.find((a) => a.name === w.name) || added.find((a) => a.kind === w.kind && !a._used);
-    if (!match) continue;
-    match._used = true;
-    for (const t of store.project.tracks) {
-      for (const c of t.clips) if (c.assetId === w.id) c.assetId = match.id;
+  for (const t of store.project.tracks) {
+    for (const c of t.clips) {
+      if (c.assetId) s.add(c.assetId);
+      if (c.visualizer?.source && c.visualizer.source !== 'master') s.add(c.visualizer.source);
     }
-    n++;
   }
-  store.changed();
-  toast(n === wanted.length ? 'All media relinked' : `Relinked ${n} of ${wanted.length} files`, n === wanted.length ? '' : 'err');
+  return s;
 }
 
 // ------------------------------------------------------------------ shortcuts
@@ -439,4 +425,4 @@ if (!store.allClips().length) {
   timeline.fit();
 }
 
-window.videdit = { store, media, renderer, playback, timeline, preview, inspector, exporter, audio };
+window.videdit = { store, media, renderer, playback, timeline, preview, inspector, exporter, audio, relinker };

@@ -3,13 +3,18 @@
 import { el, fmtTime } from './util.js';
 import { icon, hydrateIcons } from './icons.js';
 import { makeClip, makeTextStyle, makeVisualizer } from './store.js';
+import { scanDataTransfer } from './folders.js';
+
+// A dropped folder tree can be enormous; import a sane slice of it and say so.
+const MAX_DROP = 300;
 
 export class Library {
-  constructor({ store, media, timeline, playback }) {
+  constructor({ store, media, timeline, playback, relinker = null }) {
     this.store = store;
     this.media = media;
     this.timeline = timeline;
     this.playback = playback;
+    this.relinker = relinker;
     this.body = document.getElementById('leftBody');
     this.tabsEl = document.getElementById('leftTabs');
     this.tab = 'media';
@@ -22,6 +27,7 @@ export class Library {
     });
     this.media.on('change', () => this.tab === 'media' && this.render());
     this.store.on('change', () => this.tab === 'audio' && this.render());
+    this.store.on('missing', () => this.tab === 'media' && this.render());
     this.render();
     this.wireGlobalDrop();
   }
@@ -39,10 +45,23 @@ export class Library {
   }
 
   renderMedia() {
+    const missing = this.relinker?.missing() || [];
+    if (missing.length) {
+      const banner = el('div', { class: 'offline-banner' });
+      banner.append(icon('info', 14));
+      banner.append(el('div', { class: 'txt' },
+        el('b', {}, `${missing.length} file${missing.length > 1 ? 's' : ''} offline`),
+        el('span', {}, 'Clips are still on the timeline — they just have nothing to play.')));
+      const b = el('button', { class: 'btn sm', type: 'button' }, 'Relink...');
+      b.addEventListener('click', () => this.relinker.open());
+      banner.append(b);
+      this.body.append(banner);
+    }
+
     const zone = el('div', { class: 'dropzone' });
     zone.append(icon('upload', 22));
     zone.append(el('b', {}, 'Import media'));
-    zone.append(el('span', {}, 'Drop screenshots, video or audio here, or click to browse. Images keep their exact pixel size.'));
+    zone.append(el('span', {}, 'Drop screenshots, video or audio here — whole folders work too. Images keep their exact pixel size.'));
     zone.addEventListener('click', () => this.pick());
     ['dragenter', 'dragover'].forEach((ev) =>
       zone.addEventListener(ev, (e) => {
@@ -162,16 +181,26 @@ export class Library {
     return card;
   }
 
-  /** Dropping files anywhere in the window imports them. */
+  /** Dropping files — or whole folders — anywhere in the window imports them. */
   wireGlobalDrop() {
     window.addEventListener('dragover', (e) => {
       if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
     });
     window.addEventListener('drop', async (e) => {
-      if (!e.dataTransfer?.files?.length) return;
+      if (!e.dataTransfer?.types?.includes('Files')) return;
       e.preventDefault();
-      const added = await this.media.importFiles([...e.dataTransfer.files]);
-      if (added.length) this.store.emit('toast', `Imported ${added.length} file${added.length > 1 ? 's' : ''}`);
+      // Folders arrive as directory entries rather than files, so walk them;
+      // dataTransfer.items must be read before the first await, which
+      // scanDataTransfer does.
+      const entries = await scanDataTransfer(e.dataTransfer);
+      const files = entries.map((x) => x.file).filter(Boolean);
+      if (!files.length) return;
+      const capped = files.length > MAX_DROP;
+      const added = await this.media.importFiles(files.slice(0, MAX_DROP));
+      if (added.length) {
+        this.store.emit('toast', `Imported ${added.length} file${added.length > 1 ? 's' : ''}`
+          + (capped ? ` (the first ${MAX_DROP} of ${files.length})` : ''));
+      }
     });
   }
 }

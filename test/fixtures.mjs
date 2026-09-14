@@ -1,7 +1,7 @@
 // Generates the test media: a 1733x2011 "screenshot" with a 1-pixel checker
 // (any resampling shows up instantly) and a 6 s stereo WAV.
 import { deflateSync } from 'node:zlib';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -88,6 +88,14 @@ export function build() {
     buf.writeInt16LE(s, 46 + i * 4);
   }
   writeFileSync(join(DIR, 'tone.wav'), buf);
+
+  // The same media spread over two folders, for the relink checks: one file per
+  // folder is exactly the case a single multi-file picker cannot cover, and the
+  // copy is renamed so matching cannot lean on a byte-identical filename.
+  mkdirSync(join(DIR, 'folderA'), { recursive: true });
+  mkdirSync(join(DIR, 'folderB'), { recursive: true });
+  copyFileSync(join(DIR, 'shot.png'), join(DIR, 'folderA', 'Shot.png'));
+  copyFileSync(join(DIR, 'tone.wav'), join(DIR, 'folderB', 'tone.wav'));
   return DIR;
 }
 
