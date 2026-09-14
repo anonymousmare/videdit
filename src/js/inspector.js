@@ -254,6 +254,46 @@ export class Inspector {
     return t;
   }
 
+  /** A segmented strip of one-shot actions (no selected state to paint). */
+  actions(items) {
+    const wrap = el('div', { class: 'seg' });
+    for (const [iconName, fn, tip] of items) {
+      const b = el('button', { type: 'button', title: tip });
+      b.append(icon(iconName, 14));
+      b.addEventListener('click', fn);
+      wrap.append(b);
+    }
+    return wrap;
+  }
+
+  /**
+   * Put the clip's box against an edge or the centre line of the frame.
+   * Works off the box as rendered, so it accounts for scale, crop and the
+   * text block's real measured size — and it moves a pan by shifting both of
+   * its ends, exactly the way an arrow-key nudge does.
+   */
+  alignToFrame(clip, axis, where) {
+    const box = this.renderer.boxFor(clip, this.store.playhead);
+    if (!box) return;
+    const p = this.store.project;
+    const size = axis === 'x' ? box.w : box.h;
+    const span = axis === 'x' ? p.width : p.height;
+    const now = axis === 'x' ? box.cx : box.cy;
+    const want = where === 'start' ? size / 2 : where === 'end' ? span - size / 2 : span / 2;
+    const d = want - now;
+    if (!d) return;
+    this.begin();
+    if (clip.motion?.enabled) {
+      clip.motion.from[axis] += d;
+      clip.motion.to[axis] += d;
+    } else {
+      clip[axis] += d;
+    }
+    this.live();
+    this.commit('Align to frame');
+    this.refresh();
+  }
+
   btn(text, iconName, fn, cls = '') {
     const b = el('button', { class: `btn sm ${cls}`, type: 'button' });
     if (iconName) b.append(icon(iconName, 13));
@@ -379,6 +419,18 @@ export class Inspector {
         this.num(() => clip.y, (v) => (clip.y = v), { step: 1, unit: 'y', label: 'Position' }),
       ),
       this.numRow('Scale', () => clip.scale, (v) => (clip.scale = clamp(v, 0.01, 40)), { step: 0.01, min: 0.01, max: 40, unit: 'x' }),
+      this.row('Align', el('div', { class: 'pair' },
+        this.actions([
+          ['alignLeft', () => this.alignToFrame(clip, 'x', 'start'), 'Left edge of frame'],
+          ['alignCenter', () => this.alignToFrame(clip, 'x', 'center'), 'Centre horizontally'],
+          ['alignRight', () => this.alignToFrame(clip, 'x', 'end'), 'Right edge of frame'],
+        ]),
+        this.actions([
+          ['alignTop', () => this.alignToFrame(clip, 'y', 'start'), 'Top of frame'],
+          ['alignMiddle', () => this.alignToFrame(clip, 'y', 'center'), 'Centre vertically'],
+          ['alignBottom', () => this.alignToFrame(clip, 'y', 'end'), 'Bottom of frame'],
+        ]),
+      )),
       el('div', { class: 'btn-row' },
         this.btn('Centre', 'target', () => {
           this.begin();
@@ -550,6 +602,23 @@ export class Inspector {
       ),
       this.numRow('Wrap width', () => ts.maxWidth, (v) => (ts.maxWidth = Math.max(0, v)), { step: 10, min: 0, unit: 'px' }),
       this.row(null, this.check('Italic', () => ts.italic, (v) => (ts.italic = v), 'Italic')),
+      el('div', { class: 'btn-row' },
+        this.btn('Column to frame', 'maximize', () => {
+          this.begin();
+          ts.maxWidth = Math.round(this.store.project.width * 0.8);
+          this.live();
+          this.commit('Wrap width');
+          this.refresh();
+        }),
+        this.btn('Hug text', 'x', () => {
+          this.begin();
+          ts.maxWidth = 0;
+          this.live();
+          this.commit('Wrap width');
+          this.refresh();
+        }),
+      ),
+      this.alignHint(ts),
     ];
     // 0 wrap width = the text never wraps on its own; use line breaks.
     const shadowBody = [
@@ -585,6 +654,24 @@ export class Inspector {
     frag.append(this.section('Text', 'type', body, { key: 'text' }));
     frag.append(this.section('Shadow & outline', 'sparkle', shadowBody, { key: 'shadow', badge: sh.enabled ? 'on' : '' }));
     return frag;
+  }
+
+  /**
+   * Align is a lines-within-the-block control, and with no wrap width the
+   * block is exactly as wide as the longest line — so on a one-line title it
+   * has nothing to move. Rather than leave that looking broken, say it, and
+   * point at the two controls that do what was probably meant.
+   */
+  alignHint(ts) {
+    const h = el('div', { class: 'hint' });
+    const paint = () => {
+      h.textContent = ts.maxWidth > 0
+        ? 'Align ranges the lines inside the wrap width. To move the whole block in the frame, use Align under Transform.'
+        : 'The block hugs the text, so Align only ranges the lines against each other — a single line has nowhere to go. Set a wrap width to align inside a fixed column, or use Align under Transform to move the whole block.';
+    };
+    paint();
+    this.updaters.push(paint);
+    return h;
   }
 
   vizSection(clip) {

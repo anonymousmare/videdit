@@ -3,6 +3,7 @@
 
 import { transformAt, motionK } from './store.js';
 import { clamp, drag } from './util.js';
+import { frameGuides, boxGuides, snapBox, SNAP_TOLERANCE } from './snap.js';
 
 const HANDLE = 7;
 
@@ -19,6 +20,8 @@ export class Preview {
     this.octx = this.overlay.getContext('2d');
     this.zoomMode = 'fit';
     this.z = 1;
+    this.snapping = true;
+    this.snapLines = [];
     this.bind();
     this.resize();
   }
@@ -39,6 +42,27 @@ export class Preview {
       this.resize();
     });
     this.overlay.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+
+    const snapBtn = document.getElementById('btnSnap');
+    snapBtn?.addEventListener('click', () => {
+      this.snapping = !this.snapping;
+      snapBtn.classList.toggle('on', this.snapping);
+    });
+    snapBtn?.classList.toggle('on', this.snapping);
+  }
+
+  /**
+   * Every line the clip being dragged is allowed to land on: the frame's
+   * edges, halves and thirds, plus the boxes of the other clips on screen.
+   */
+  guidesFor(dragged) {
+    const out = frameGuides(this.store.project);
+    for (const { clip } of this.renderer.visibleClips(this.store.playhead)) {
+      if (clip === dragged) continue;
+      const box = this.renderer.boxFor(clip, this.store.playhead, { snapPixels: false });
+      if (box) out.push(...boxGuides(box));
+    }
+    return out;
   }
 
   resize() {
@@ -142,15 +166,38 @@ export class Preview {
       from: { ...clip.motion.from },
       to: { ...clip.motion.to },
     };
+    // The box under the cursor when the drag started. Scale and the playhead
+    // are both fixed for the length of a move, so the live box is only ever
+    // this one plus the drag delta — which is what the guides are tested
+    // against, in every motion mode.
+    const base = this.renderer.boxFor(clip, this.store.playhead, { snapPixels: false });
+    const guides = this.guidesFor(clip);
     drag(e, {
       cursor: 'grabbing',
       onMove: ({ dx, dy, e: ev }) => {
         let mx = dx / this.z;
         let my = dy / this.z;
-        if (ev.shiftKey) Math.abs(mx) > Math.abs(my) ? (my = 0) : (mx = 0);
+        // Shift locks the move to one axis; the locked axis must not be
+        // snapped either, or the guide would quietly break the constraint.
+        const lock = !ev.shiftKey ? null : Math.abs(mx) > Math.abs(my) ? 'y' : 'x';
+        if (lock === 'y') my = 0;
+        if (lock === 'x') mx = 0;
+        this.snapLines = [];
+        let held = { x: false, y: false };
+        if (base && this.snapping && !ev.altKey) {
+          const moved = { left: base.left + mx, top: base.top + my, w: base.w, h: base.h };
+          const s = snapBox(moved, guides, SNAP_TOLERANCE / this.z);
+          this.snapLines = s.lines.filter((l) => l.axis !== lock);
+          held = { x: this.snapLines.some((l) => l.axis === 'x'), y: this.snapLines.some((l) => l.axis === 'y') };
+          if (held.x) mx += s.dx;
+          if (held.y) my += s.dy;
+        }
+        // Whole-pixel snapping is the fallback here, not a second opinion:
+        // rounding a delta the guide has just placed would drag the box back
+        // off the line it landed on.
         if (clip.pixelSnap) {
-          mx = Math.round(mx);
-          my = Math.round(my);
+          if (!held.x) mx = Math.round(mx);
+          if (!held.y) my = Math.round(my);
         }
         if (mode === 'static') {
           clip.x = o.x + mx;
@@ -172,6 +219,8 @@ export class Preview {
         this.drawOverlay();
       },
       onEnd: ({ moved }) => {
+        this.snapLines = [];
+        this.drawOverlay();
         if (!moved) return;
         this.store.push(mode === 'static' ? 'Move' : `Move pan ${mode}`, before);
         this.store.changed();
@@ -216,6 +265,7 @@ export class Preview {
     const w = p.width * this.z;
     const h = p.height * this.z;
     g.clearRect(0, 0, w, h);
+    this.drawGuides(g, w, h);
     const t = this.store.playhead;
     const sel = this.selectedVisual();
     if (!sel.length) return;
@@ -274,6 +324,29 @@ export class Preview {
         g.fillText(label, x + 6, ly + 13);
       }
     }
+  }
+
+  /** The alignment lines a drag has just landed on. */
+  drawGuides(g, w, h) {
+    if (!this.snapLines.length) return;
+    g.save();
+    g.lineWidth = 1;
+    g.setLineDash([4, 3]);
+    for (const l of this.snapLines) {
+      // Half-pixel offset so a 1 px line lands on a pixel instead of straddling two.
+      const at = Math.round(l.at * this.z) + 0.5;
+      g.strokeStyle = l.kind === 'clip' ? '#00d6b2' : '#ff4d8d';
+      g.beginPath();
+      if (l.axis === 'x') {
+        g.moveTo(at, 0);
+        g.lineTo(at, h);
+      } else {
+        g.moveTo(0, at);
+        g.lineTo(w, at);
+      }
+      g.stroke();
+    }
+    g.restore();
   }
 
   drawMotionPath(g, clip, box) {

@@ -50,7 +50,8 @@
           <canvas id="preview" width="1024" height="1024"></canvas>
           <canvas id="overlay"></canvas>
         </div>
-        <!-- Dragging on the frame moves a clip; shift constrains it to one axis.
+        <!-- Dragging on the frame moves a clip; shift constrains it to one axis
+             and alt drops the alignment snapping for that drag.
              Dropped media lands at its exact pixel size, never scaled to fit. -->
         <div class="stage-empty" id="stageEmpty">
           <span data-icon="image" data-icon-size="34"></span>
@@ -70,6 +71,8 @@
         <button class="btn icon ghost tip-up" id="btnMute" data-icon="volume" data-tip="Mute preview"></button>
         <input type="range" class="slider" id="volume" min="0" max="1" step="0.01" value="1" style="width:88px" />
         <span class="sep"></span>
+        <button class="btn icon ghost tip-up" id="btnSnap" data-icon="magnet"
+                data-tip="Snap to guides  hold Alt to bypass"></button>
         <div class="zoom-pill">
           <span data-icon="maximize" data-icon-size="13" style="color:var(--text-mute)"></span>
           <select id="zoomSel" title="Preview zoom">

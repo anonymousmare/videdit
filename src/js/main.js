@@ -383,6 +383,7 @@ function showHelp() {
     ['Alt wheel', 'Scroll the tracks up / down'],
     ['Ctrl wheel', 'Zoom the timeline around the pointer'],
     ['Shift drag', 'Constrain a move to one axis'],
+    ['Alt drag', 'Move on the frame without snapping to the guides'],
     ['Right-click a track head', 'Delete that track'],
   ];
   const grid = el('div', { class: 'shortcut-grid' });
