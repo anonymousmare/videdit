@@ -264,7 +264,11 @@ export class Exporter {
     const p = this.store.project;
     const dur = this.store.duration();
     const ctx = getCtx();
-    if (ctx.state === 'suspended') await ctx.resume();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    const silent = ctx.state !== 'running';
 
     const stream = this.renderer.canvas.captureStream(p.fps);
     const dest = ctx.createMediaStreamDestination();
@@ -294,10 +298,15 @@ export class Exporter {
       }
     }
 
+    if (silent) progress(0, 'No audio output available — recording video only.');
+    const wall0 = performance.now();
     await new Promise((resolve) => {
       const tick = () => {
-        const t = Math.max(0, ctx.currentTime - startCtx);
-        if (this.cancelled || t >= dur) return resolve();
+        const elapsed = (performance.now() - wall0) / 1000;
+        // Prefer the audio clock while it runs; otherwise the wall clock, and
+        // bail out regardless so a stalled clock can never hang the export.
+        const t = ctx.state === 'running' ? Math.max(0, ctx.currentTime - startCtx) : elapsed;
+        if (this.cancelled || t >= dur || elapsed > dur * 3 + 15) return resolve();
         this.store.playhead = t;
         this.playback.syncVideos(t, false);
         for (const track of this.store.project.tracks) {
@@ -317,7 +326,7 @@ export class Exporter {
     this.audio.stop();
     this.playback.pauseVideos();
     rec.stop();
-    await stopped;
+    await Promise.race([stopped, new Promise((r) => setTimeout(r, 5000))]);
     if (this.cancelled) {
       progress(0, 'Cancelled.');
       return;

@@ -98,6 +98,7 @@ export class Library {
       el('div', { class: 'nm' }, a.name), el('div', { class: 'sub' }, sub)));
     card.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/videdit-asset', a.id);
+      e.dataTransfer.setData('text/plain', a.name); // Firefox wants a standard type too
       e.dataTransfer.effectAllowed = 'copy';
     });
     card.addEventListener('dblclick', () => this.timeline.appendAsset(a.id));

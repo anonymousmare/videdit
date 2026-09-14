@@ -10,12 +10,29 @@ whole pixels, so one source pixel lands on exactly one output pixel.
 
 Runs in the browser, no build step, no dependencies.
 
+## Running it
+
 ```bash
 npm start      # -> http://localhost:5173
 ```
 
-Chromium or Chrome is the target (it is the only engine with the codec and
-capture support the exporter needs). Firefox works for editing.
+**Do not double-click `index.html`.** The app is built from JavaScript modules,
+and every browser refuses to load those over `file://` — Firefox says
+*"Cross-Origin Request Blocked ... CORS request not http"*. You get the dark
+window with no icons and nothing clickable. It has to be served over http, which
+is all `npm start` does. (If you do open it the wrong way, the page now tells you
+so instead of sitting there looking broken.)
+
+Chrome, Edge and Firefox are all supported, and the test suite runs green on
+both engines. Two Firefox differences, neither fatal: it offers VP8 rather than
+VP9 for the quick video export, and it has no folder picker, so a PNG sequence
+downloads as a `.zip` instead of being written into a folder you choose.
+
+## Importing media
+
+Drag image, video or audio files anywhere into the window, click **Import** in
+the toolbar, or press `Ctrl I`. They appear in the media pool on the left; drag
+one onto a track, or double-click it to drop it at the playhead.
 
 ## What it does
 
@@ -111,8 +128,9 @@ media files again and relinks them by filename.
 ## Tests
 
 ```bash
-npm i -D playwright && npx playwright install chromium
-npm test
+npm i -D playwright && npx playwright install chromium firefox
+npm test                      # chromium
+npm test -- firefox           # same checks in Gecko
 ```
 
 Drives a real Chromium: imports a 1733 × 2011 checkerboard whose colour at every
@@ -147,3 +165,5 @@ src/js/
   silent in the mix; images, WAV, MP3, M4A and OGG are all fine.
 - MP4 recording only appears in the format list if your browser reports support
   for it; otherwise use the PNG route and ffmpeg.
+- If the browser cannot open an audio output device the preview plays silently
+  and keeps time off the wall clock, so editing and export still work.

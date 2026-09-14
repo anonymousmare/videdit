@@ -12,12 +12,16 @@ import { join } from 'node:path';
 import { build, DIR, shotPixel } from './fixtures.mjs';
 
 const require = createRequire(import.meta.url);
-let chromium;
+// `npm test -- firefox` (or BROWSER=firefox) runs the same checks in Gecko.
+const ENGINE = (process.argv[2] || process.env.BROWSER || 'chromium').toLowerCase();
+let launcher;
 try {
   const pw = await import(pathToFileURL(require.resolve('playwright')).href);
-  chromium = pw.chromium ?? pw.default.chromium;
-} catch {
-  console.error('Playwright is needed for the smoke test:\n  npm i -D playwright && npx playwright install chromium');
+  launcher = (pw.default ?? pw)[ENGINE];
+  if (!launcher) throw new Error(`unknown browser ${ENGINE}`);
+} catch (err) {
+  console.error(`Playwright is needed for the smoke test (${err.message}):\n`
+    + `  npm i -D playwright && npx playwright install ${ENGINE}`);
   process.exit(1);
 }
 
@@ -39,7 +43,10 @@ const stop = () => server.kill();
 process.on('exit', stop);
 await new Promise((r) => setTimeout(r, 600));
 
-const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'] });
+console.log(`\nvidedit smoke test — ${ENGINE}`);
+const browser = await launcher.launch(
+  ENGINE === 'chromium' ? { args: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'] } : {},
+);
 const page = await browser.newPage({ viewport: { width: 1600, height: 950 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));

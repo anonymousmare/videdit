@@ -201,6 +201,21 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .stage-view:hover .stage-hint { opacity: .8; }
 
+.stage-empty {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 9px; text-align: center;
+  padding: 24px; color: var(--text-mute); pointer-events: none;
+  background: radial-gradient(closest-side, rgba(11, 12, 16, .92), rgba(11, 12, 16, .55));
+}
+.stage-empty b { color: var(--text); font-size: 14px; font-weight: 600; }
+.stage-empty span { max-width: 380px; font-size: 12px; line-height: 1.6; }
+.stage-empty em { color: var(--accent); font-style: normal; }
+.stage-empty .ic { opacity: .4; margin-bottom: 4px; }
+.stage-empty[hidden] { display: none; }
+
+/* Firefox ignores ::-webkit-scrollbar; keep its bars dark too. */
+.panel-body, .tl-scroll, .log, .modal { scrollbar-color: #2b3042 transparent; scrollbar-width: thin; }
+
 .transport {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
   border-top: 1px solid var(--line); background: var(--bg-1);

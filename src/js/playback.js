@@ -57,8 +57,17 @@ export class Playback {
     this._raf = requestAnimationFrame(loop);
   }
 
+  /**
+   * Master clock. The audio context is the reference while it is actually
+   * running, because that is what the scheduled audio rides on. If it never
+   * starts — no output device, or a browser that keeps it suspended — fall
+   * back to the wall clock so the preview still plays instead of freezing.
+   */
   clockTime() {
-    return this._from + (getCtx().currentTime - this._t0);
+    const ctx = getCtx();
+    if (ctx.state === 'running') this._audioOk = true;
+    if (this._audioOk) return this._from + (ctx.currentTime - this._t0);
+    return this._from + (performance.now() - this._wall0) / 1000;
   }
 
   play(from = null) {
@@ -68,6 +77,8 @@ export class Playback {
     resumeCtx();
     this.audio.resetSmoothing();
     this._from = at;
+    this._wall0 = performance.now();
+    this._audioOk = false;
     this._t0 = this.audio.start(at);
     this.store.playhead = at;
     this.playing = true;

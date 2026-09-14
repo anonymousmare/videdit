@@ -18,6 +18,8 @@
     <button class="btn icon ghost" id="btnUndo" data-icon="undo" data-tip="Undo  Ctrl+Z"></button>
     <button class="btn icon ghost" id="btnRedo" data-icon="redo" data-tip="Redo  Ctrl+Shift+Z"></button>
     <span class="sep"></span>
+    <button class="btn ghost" id="btnImport" data-icon="upload" data-tip="Import images, video or audio  Ctrl+I">Import</button>
+    <span class="sep"></span>
     <button class="btn ghost" id="btnSplit" data-icon="scissors" data-tip="Split at playhead  S">Split</button>
     <button class="btn icon ghost" id="btnDupe" data-icon="duplicate" data-tip="Duplicate  Ctrl+D"></button>
     <button class="btn icon ghost danger" id="btnDelete" data-icon="trash" data-tip="Delete  Del"></button>
@@ -49,6 +51,11 @@
           <canvas id="overlay"></canvas>
         </div>
         <div class="stage-hint" id="stageHint">Drag on the frame to move a clip &middot; Shift drags on one axis</div>
+        <div class="stage-empty" id="stageEmpty">
+          <span data-icon="image" data-icon-size="34"></span>
+          <b>Drop your screenshots anywhere in this window</b>
+          <span>or use <em>Import</em> in the toolbar. They land at their exact pixel size &mdash; nothing gets scaled to fit.</span>
+        </div>
       </div>
       <div class="transport">
         <button class="btn icon ghost tip-up" id="btnStart" data-icon="skipStart" data-tip="Start  Home"></button>
@@ -121,5 +128,34 @@
 <input type="file" id="projPicker" accept=".json,application/json" hidden />
 
 <script type="module" src="src/js/main.js"></script>
+<script>
+// If the module above never ran, the page is a dead shell with no icons and
+// nothing clickable. Say so, instead of leaving an empty dark window.
+(function () {
+  setTimeout(function () {
+    if (window.videdit) return;
+    var onFile = location.protocol === 'file:';
+    var wrap = document.createElement('div');
+    wrap.setAttribute('style', 'position:fixed;inset:0;z-index:9999;display:grid;place-items:center;'
+      + 'background:rgba(4,5,9,.92);font:14px/1.6 Inter,"Segoe UI",system-ui,sans-serif;color:#e8eaf2;padding:24px');
+    wrap.innerHTML =
+      '<div style="max-width:560px;background:#171924;border:1px solid #272b3a;border-radius:12px;padding:22px 24px">'
+      + '<div style="font-size:16px;font-weight:700;margin-bottom:10px">videdit did not start</div>'
+      + (onFile
+        ? '<p style="margin:0 0 12px;color:#9aa1b8">You opened the file straight off disk. Browsers refuse to load'
+          + ' JavaScript modules over <code>file://</code>, so nothing on this page works &mdash; that is why the'
+          + ' icons and buttons are missing. It needs to be served over http.</p>'
+        : '<p style="margin:0 0 12px;color:#9aa1b8">The app scripts failed to load. If you started the server from'
+          + ' another folder it will answer every request with 404. Open the browser console for the exact error.</p>')
+      + '<p style="margin:0 0 8px;color:#9aa1b8">From the project folder, run:</p>'
+      + '<pre style="margin:0 0 12px;background:#0b0c10;border:1px solid #272b3a;border-radius:6px;padding:10px 12px;'
+      + 'font:12px ui-monospace,Menlo,Consolas,monospace;color:#e8eaf2">npm start</pre>'
+      + '<p style="margin:0;color:#9aa1b8">then open <a href="http://localhost:5173" '
+      + 'style="color:#6e8dff">http://localhost:5173</a>. No install step is needed &mdash; it has no dependencies.</p>'
+      + '</div>';
+    document.body.appendChild(wrap);
+  }, 1500);
+})();
+</script>
 </body>
 </html>
