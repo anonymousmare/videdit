@@ -51,10 +51,8 @@ export class Library {
       }),
     );
     ['dragleave', 'drop'].forEach((ev) => zone.addEventListener(ev, () => zone.classList.remove('hot')));
-    zone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      if (e.dataTransfer.files.length) this.media.importFiles([...e.dataTransfer.files]);
-    });
+    // No import here: the window-level handler in wireGlobalDrop() catches the
+    // same event as it bubbles, and importing in both places imports twice.
     this.body.append(zone);
 
     const assets = this.media.list();
@@ -169,10 +167,11 @@ export class Library {
     window.addEventListener('dragover', (e) => {
       if (e.dataTransfer?.types.includes('Files')) e.preventDefault();
     });
-    window.addEventListener('drop', (e) => {
+    window.addEventListener('drop', async (e) => {
       if (!e.dataTransfer?.files?.length) return;
       e.preventDefault();
-      this.media.importFiles([...e.dataTransfer.files]);
+      const added = await this.media.importFiles([...e.dataTransfer.files]);
+      if (added.length) this.store.emit('toast', `Imported ${added.length} file${added.length > 1 ? 's' : ''}`);
     });
   }
 }
