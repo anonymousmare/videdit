@@ -59,8 +59,30 @@ export const shotPixel = (x, y) => {
   return [cell, cell, x % 256];
 };
 
+/**
+ * A stand-in screenshot: dark panel, 1-pixel rules, and rows of bright stems
+ * with irregular spacing standing in for text. The point is the spectrum —
+ * high-contrast detail a pixel or two wide, which is what crawls when an image
+ * is translated by a fraction of a pixel. The checker in shot.png cannot stand
+ * in for it: at exactly one pixel it sits on Nyquist, where no resampling has
+ * any stable answer and everything collapses to flat grey.
+ */
+export const uiPixel = (x, y) => {
+  if (y % 28 === 4 && x > 40 && x < 860) return [58, 63, 79];   // hairline rule
+  const row = Math.floor(y / 28);
+  const band = y % 28;
+  if (band >= 9 && band <= 21 && x > 55 && x < 845) {
+    // A per-row LCG so the stems are irregular the way glyphs are.
+    let h = (x * 1103515245 + row * 12345) >>> 0;
+    h = (h >>> 16) & 0xff;
+    if (h < 90) return [232, 234, 242];
+  }
+  return [20, 22, 28];
+};
+
 export function build() {
   mkdirSync(DIR, { recursive: true });
+  writeFileSync(join(DIR, 'ui.png'), png(900, 900, (x, y) => [...uiPixel(x, y), 255]));
   writeFileSync(join(DIR, 'shot.png'), png(1733, 2011, (x, y) => [...shotPixel(x, y), 255]));
   writeFileSync(join(DIR, 'small.png'), png(320, 200, (x, y) => [((x * 255) / 320) | 0, ((y * 255) / 200) | 0, 128, 255]));
 
