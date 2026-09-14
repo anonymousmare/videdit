@@ -50,11 +50,11 @@
           <canvas id="preview" width="1024" height="1024"></canvas>
           <canvas id="overlay"></canvas>
         </div>
-        <div class="stage-hint" id="stageHint">Drag on the frame to move a clip &middot; Shift drags on one axis</div>
+        <!-- Dragging on the frame moves a clip; shift constrains it to one axis.
+             Dropped media lands at its exact pixel size, never scaled to fit. -->
         <div class="stage-empty" id="stageEmpty">
           <span data-icon="image" data-icon-size="34"></span>
           <b>Drop your screenshots anywhere in this window</b>
-          <span>or use <em>Import</em> in the toolbar. They land at their exact pixel size &mdash; nothing gets scaled to fit.</span>
         </div>
       </div>
       <div class="transport">

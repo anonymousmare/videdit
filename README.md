@@ -70,7 +70,14 @@ track, the way CapCut does; hold the pointer past either edge and the timeline
 scrolls along with you. While snapping is on the playhead lands on clip edges
 when one is near and on whole frames otherwise, so parking it exactly on the end
 of a shot is one drag rather than a fight with sub-frame pixels. Turn snapping
-off (the magnet) for a free playhead.
+off (the magnet) for a free playhead. The wheel runs *along* the timeline
+rather than down the track stack, so jumping back and forth in a long cut is one
+flick; `Alt` + wheel, and the wheel over the track heads, still scroll the tracks.
+
+**Dropping media** — an asset dragged out of the pool is pinned to the pointer by
+its left edge, and a dashed outline shows the exact span and lane it will occupy
+(snapped, if snapping is on) before the mouse comes up. Where the outline is is
+where the clip lands.
 
 **Text with shadows** — font, size, weight, colour, alignment, line height,
 letter spacing, wrap width, plus a drop shadow (colour, opacity, blur, offset),
@@ -159,6 +166,8 @@ it is still looking for.
 | `Home` / `End` | jump to start / end |
 | arrows | nudge the selected clip 1 px (`Shift` 10 px) |
 | `+` `-` / `Shift Z` | zoom timeline / fit |
+| wheel over the timeline | run the timeline forward / back |
+| `Alt` + wheel, or the wheel over the track heads | scroll the tracks up / down |
 | `Ctrl` + wheel | zoom the timeline around the pointer |
 | `Shift` while dragging | constrain to one axis |
 | right-click a track head | delete that track |

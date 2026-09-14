@@ -330,8 +330,9 @@ export class Relinker {
     const actions = el('div', { class: 'relink-actions' }, folderBtn, filesBtn);
 
     const zone = el('div', { class: 'dropzone sm' });
-    zone.append(el('b', {}, 'Drop folders or files here'),
-      el('span', {}, 'Whole folders are searched, subfolders included. Add as many as you need — this stays open until everything is found.'));
+    // Whole folders are searched, subfolders included, and the dialog stays
+    // open across as many rounds as it takes.
+    zone.append(el('b', {}, 'Drop folders or files here'));
 
     this.listEl = el('div', { class: 'relink-list' });
     this.folderEl = el('div', { class: 'relink-folders' });
@@ -437,9 +438,8 @@ export class Relinker {
       this.folderEl.append(frag);
       hydrateIcons(this.folderEl);
     };
+    // Only Chrome and Edge can hold on to a folder handle between reloads.
     if (!canRemember()) {
-      frag.append(el('div', { class: 'hint' },
-        'This browser cannot remember folders between reloads. Chrome and Edge can — there the folder you pick here is reused automatically next time.'));
       show();
       return;
     }

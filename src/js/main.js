@@ -191,7 +191,7 @@ $('btnSave').addEventListener('click', () => {
   download(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
     `${(store.project.name || 'project').replace(/[^\w\-]+/g, '_')}.videdit.json`);
   store.dirty = false;
-  toast('Project saved. Media files are referenced by name, not embedded.');
+  toast('Project saved'); // media is referenced by name, never embedded
 });
 
 $('btnOpen').addEventListener('click', () => $('projPicker').click());
@@ -379,6 +379,8 @@ function showHelp() {
     ['Arrows', 'Nudge the selected clip 1 px (Shift: 10 px)'],
     ['+ / -', 'Zoom the timeline'],
     ['Shift Z', 'Fit the timeline'],
+    ['Wheel', 'Run the timeline forward / back'],
+    ['Alt wheel', 'Scroll the tracks up / down'],
     ['Ctrl wheel', 'Zoom the timeline around the pointer'],
     ['Shift drag', 'Constrain a move to one axis'],
     ['Right-click a track head', 'Delete that track'],
@@ -392,9 +394,9 @@ function showHelp() {
   const x = el('button', { class: 'btn icon ghost', type: 'button' });
   x.append(icon('x', 14));
   head.append(x);
-  modal.append(head, el('div', { class: 'body' }, grid,
-    el('div', { class: 'hint' },
-      'Images and video are placed at their native pixel size and never scaled to fit the canvas. Scale 1.00 means one source pixel per canvas pixel — the readout on the frame turns green when you are exactly 1:1.')));
+  // Images and video sit at their native pixel size and are never scaled to fit
+  // the canvas; at scale 1.00 the readout on the frame turns green.
+  modal.append(head, el('div', { class: 'body' }, grid));
   scrim.append(modal);
   document.body.append(scrim);
   const close = () => scrim.remove();

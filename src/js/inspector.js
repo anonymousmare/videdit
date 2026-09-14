@@ -307,9 +307,9 @@ export class Inspector {
       ),
       this.numRow('Frame rate', () => p.fps, (v) => (p.fps = clamp(Math.round(v), 1, 120)), { step: 1, min: 1, max: 120, unit: 'fps' }),
       this.row('Background', this.color(() => p.background, (v) => (p.background = v), 'Background')),
-      el('div', { class: 'native-note' }, icon('info', 13), el('div', { class: 'hint' },
-        'Imported media keeps its native pixel size. Nothing is scaled to fit the canvas — a 1733 x 2011 screenshot stays 1733 x 2011 and the frame simply crops it.')),
     ];
+    // Imported media keeps its native pixel size. Nothing is scaled to fit the
+    // canvas — a 1733 x 2011 screenshot stays 1733 x 2011 and the frame crops it.
     this.root.append(this.section('Project', 'settings', body, { key: 'project' }));
     this.root.append(
       el('div', { class: 'insp-empty' }, icon('sliders', 30), el('div', {}, 'Select a clip to edit its properties')),
@@ -319,7 +319,6 @@ export class Inspector {
 
   renderMulti(sel) {
     const body = [
-      el('div', { class: 'hint' }, `${sel.length} clips selected. Drag to move them together, or use the shared controls below.`),
       this.row('Opacity', this.range(() => sel[0].opacity, (v) => sel.forEach((c) => (c.opacity = v)), { label: 'Opacity' })),
       this.pairRow(
         'Fade',
@@ -401,11 +400,11 @@ export class Inspector {
         this.check('Horizontal', () => clip.flipX, (v) => (clip.flipX = v), 'Flip'),
         this.check('Vertical', () => clip.flipY, (v) => (clip.flipY = v), 'Flip'))),
       this.row('Blend', this.select(BLENDS.map((b) => [b, b === 'source-over' ? 'Normal' : b]), () => clip.blend, (v) => (clip.blend = v), 'Blend mode')),
-      this.row(null, this.check('Snap to whole pixels (keeps it crisp)', () => clip.pixelSnap, (v) => (clip.pixelSnap = v), 'Pixel snap')),
-      this.row(null, this.check('Smooth when scaled (off = nearest neighbour)', () => clip.smooth, (v) => (clip.smooth = v), 'Smoothing')),
-      native && el('div', { class: 'native-note' }, icon('info', 13),
-        el('div', { class: 'hint' }, `Native size <code>${native}</code>. At scale 1.00 every source pixel lands on exactly one canvas pixel.`)),
+      this.row(null, this.check('Snap to whole pixels', () => clip.pixelSnap, (v) => (clip.pixelSnap = v), 'Pixel snap')),
+      this.row(null, this.check('Smooth when scaled', () => clip.smooth, (v) => (clip.smooth = v), 'Smoothing')),
     ];
+    // Smoothing off = nearest neighbour. At scale 1.00 every source pixel lands
+    // on exactly one canvas pixel; the section badge carries the native size.
     return this.section('Transform', 'move', body, { key: 'transform', badge: native });
   }
 
@@ -429,7 +428,8 @@ export class Inspector {
         }
         m.enabled = v;
       }, 'Motion')),
-      el('div', { class: 'hint' }, 'A = where it starts, B = where it ends. Drag the image on the frame while the playhead is at either end to place the points.'),
+      // A = where it starts, B = where it ends; dragging the image on the frame
+      // with the playhead at either end writes that end's point.
       this.pairRow(
         'A start',
         this.num(() => m.from.x, (v) => (m.from.x = v), { step: 1, unit: 'x', label: 'Pan start' }),
@@ -505,11 +505,9 @@ export class Inspector {
         this.btn('2s', null, () => this.setFade(clip, 2)),
         this.btn('None', null, () => this.setFade(clip, 0)),
       ),
-      el('div', { class: 'hint' },
-        visual
-          ? '"From colour" dips the whole frame to the fade colour — that is your fade in/out from black. "Opacity" fades just this clip over the layers below.'
-          : 'Audio fades ramp the clip gain linearly.'),
     ].filter(Boolean);
+    // "From colour" dips the whole frame (fade in/out from black); "Opacity"
+    // fades only this clip over the layers below. Audio fades ramp gain.
     return this.section(visual ? 'Fade' : 'Fade', 'fade', body, { key: 'fade' });
   }
 
@@ -524,8 +522,8 @@ export class Inspector {
 
   audioSection(clip) {
     const body = [
+      // 1.00 is unity gain; the fades above apply to this clip.
       this.row('Volume', this.range(() => clip.gain, (v) => (clip.gain = v), { min: 0, max: 2, step: 0.01, label: 'Volume' })),
-      el('div', { class: 'hint' }, '1.00 is unity gain. Fades above apply to this clip.'),
     ];
     return this.section('Audio', 'volume', body, { key: 'audio' });
   }
@@ -552,8 +550,8 @@ export class Inspector {
       ),
       this.numRow('Wrap width', () => ts.maxWidth, (v) => (ts.maxWidth = Math.max(0, v)), { step: 10, min: 0, unit: 'px' }),
       this.row(null, this.check('Italic', () => ts.italic, (v) => (ts.italic = v), 'Italic')),
-      el('div', { class: 'hint' }, '0 wrap width = the text never wraps on its own; use line breaks.'),
     ];
+    // 0 wrap width = the text never wraps on its own; use line breaks.
     const shadowBody = [
       this.row(null, this.check('Drop shadow', () => sh.enabled, (v) => (sh.enabled = v), 'Shadow')),
       this.row('Colour', this.color(() => sh.color, (v) => (sh.color = v), 'Shadow colour')),
@@ -621,8 +619,9 @@ export class Inspector {
         this.num(() => v.maxFreq, (x) => (v.maxFreq = clamp(x, 500, 22000)), { step: 100, unit: 'Hz', label: 'Frequency range' }),
       ),
       this.numRow('Noise floor', () => v.floorDb, (x) => (v.floorDb = clamp(x, -120, -10)), { step: 1, min: -120, max: -10, unit: 'dB' }),
-      el('div', { class: 'hint' }, 'The spectrum is read straight from the decoded audio, so the preview and the export match frame for frame.'),
     ];
+    // The spectrum is read straight from the decoded audio, so the preview and
+    // the export match frame for frame.
     return this.section('Visualiser', 'waveform', body, { key: 'viz' });
   }
 
