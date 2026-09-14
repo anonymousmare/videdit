@@ -14,6 +14,8 @@ const CLIP_COLORS = {
 };
 const DEFAULT_STILL = 5;
 const HEAD_W = 150;
+// How close to the viewport edge a scrub drag has to get before it scrolls.
+const EDGE_ZONE = 30;
 
 export class Timeline {
   constructor({ store, media, playback }) {
@@ -56,20 +58,16 @@ export class Timeline {
 
     // Scrub from the ruler.
     this.ruler.addEventListener('pointerdown', (e) => {
-      const rect = this.ruler.getBoundingClientRect();
-      const at = (clientX) => this.playback.seek(Math.max(0, this.xToTime(clientX - rect.left)));
-      at(e.clientX);
-      drag(e, { onMove: ({ x }) => at(x), cursor: 'ew-resize' });
+      if (e.button !== 0) return;
+      this.scrub(e);
     });
 
-    // Click empty lane space to deselect / move playhead.
+    // Drag through empty lane space to scrub as well; the click deselects.
     this.lanes.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
       if (e.target.closest('.clip')) return;
-      const lane = e.target.closest('.lane');
       this.store.select([]);
-      if (!lane) return;
-      const rect = lane.getBoundingClientRect();
-      this.playback.seek(Math.max(0, this.xToTime(e.clientX - rect.left)));
+      this.scrub(e);
     });
 
     // Ctrl+wheel = zoom around the pointer, shift+wheel = horizontal pan.
@@ -384,6 +382,70 @@ export class Timeline {
     }
     this.snapEl.style.display = 'block';
     this.snapEl.style.left = `${this.timeToX(t)}px`;
+  }
+
+  /** Where the playhead itself may land: every clip edge, plus zero. */
+  playheadTargets() {
+    const out = [0];
+    for (const t of this.store.project.tracks) {
+      for (const c of t.clips) out.push(c.start, clipEnd(c));
+    }
+    return out;
+  }
+
+  /**
+   * Scrubbing lands on a clip edge when one is near, and on the frame grid
+   * otherwise — parking the playhead exactly on the end of a clip is the whole
+   * point, and free-floating sub-frame times make that impossible by hand.
+   */
+  snapPlayhead(time) {
+    if (!this.store.snapping) return { time, hit: null };
+    const s = this.snap(time, this.playheadTargets());
+    if (s.hit != null) return s;
+    const fps = this.store.project.fps || 30;
+    return { time: Math.round(time * fps) / fps, hit: null };
+  }
+
+  /**
+   * Drag the playhead from the ruler or from empty lane space. Holding the
+   * pointer past either edge of the viewport scrolls the timeline along.
+   */
+  scrub(startEvent) {
+    let clientX = startEvent.clientX;
+    let raf = null;
+    const seekTo = () => {
+      const raw = Math.max(0, this.xToTime(clientX - this.lanes.getBoundingClientRect().left));
+      const s = this.snapPlayhead(raw);
+      this.showSnap(s.hit);
+      this.playback.seek(Math.max(0, s.time));
+    };
+    const edgeScroll = () => {
+      raf = requestAnimationFrame(edgeScroll);
+      const r = this.scroll.getBoundingClientRect();
+      const lo = r.left + HEAD_W + EDGE_ZONE;
+      const hi = r.right - EDGE_ZONE;
+      const over = clientX < lo ? clientX - lo : clientX > hi ? clientX - hi : 0;
+      if (!over) return;
+      const was = this.scroll.scrollLeft;
+      this.scroll.scrollLeft = Math.max(0, was + clamp(over, -EDGE_ZONE, EDGE_ZONE) * 0.5);
+      if (this.scroll.scrollLeft !== was) seekTo();
+    };
+
+    this.follow = false; // don't let playback yank the view around mid-drag
+    seekTo();
+    edgeScroll();
+    drag(startEvent, {
+      cursor: 'ew-resize',
+      onMove: ({ x }) => {
+        clientX = x;
+        seekTo();
+      },
+      onEnd: () => {
+        cancelAnimationFrame(raf);
+        this.showSnap(null);
+        this.follow = true;
+      },
+    });
   }
 
   // ------------------------------------------------------------- interaction
