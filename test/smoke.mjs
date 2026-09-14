@@ -170,6 +170,52 @@ const dl = page.waitForEvent('download', { timeout: 30000 });
 await page.evaluate(() => { window.videdit.store.playhead = 2.5; return window.videdit.exporter.exportStill(() => {}); });
 ok('still frame exports', /\.png$/.test((await dl).suggestedFilename()));
 
+// Scrubbing: drag anywhere in empty lane space, and land exactly on clip edges.
+const lane = await page.evaluate(() => {
+  const { store, media, timeline, playback } = window.videdit;
+  store.project.tracks.forEach((t) => (t.clips.length = 0));
+  const img = media.list().find((a) => a.kind === 'image').id;
+  timeline.appendAsset(img, 0);
+  timeline.appendAsset(img, 8); // keeps the project longer than the edge under test
+  store.allClips().find((c) => c.start === 0).duration = 6;
+  store.changed();
+  timeline.setZoom(90);
+  timeline.scroll.scrollLeft = 0;
+  playback.seek(0);
+  // an audio lane has no clips on it, so every x in it is empty space
+  const empty = store.project.tracks.find((t) => t.kind === 'audio');
+  const r = timeline.laneEls.get(empty.id).getBoundingClientRect();
+  return { x: r.left, y: r.top + r.height / 2, zoom: store.zoom, fps: store.project.fps };
+});
+const at = () => page.evaluate(() => window.videdit.store.playhead);
+
+await page.mouse.move(lane.x + 90, lane.y);
+await page.mouse.down();
+const s0 = await at();
+await page.mouse.move(lane.x + 200, lane.y, { steps: 4 });
+const s1 = await at();
+await page.mouse.move(lane.x + 315, lane.y, { steps: 4 });
+const s2 = await at();
+await page.mouse.up();
+ok('dragging empty lane space scrubs the playhead', s0 < s1 && s1 < s2 && Math.abs(s2 - 315 / lane.zoom) < 0.02,
+  `${s0.toFixed(3)} -> ${s1.toFixed(3)} -> ${s2.toFixed(3)}`);
+ok('scrubbing lands on whole frames', Math.abs(s1 * lane.fps - Math.round(s1 * lane.fps)) < 1e-6, `${s1}`);
+
+// 6.06s is inside the snap tolerance of the clip's end at 6s
+await page.mouse.move(lane.x + 545, lane.y);
+await page.mouse.down();
+const snapped = await at();
+await page.mouse.up();
+ok('the playhead snaps to a clip edge', Math.abs(snapped - 6) < 1e-6, `${snapped}`);
+
+await page.evaluate(() => { window.videdit.store.snapping = false; });
+await page.mouse.move(lane.x + 445, lane.y);
+await page.mouse.down();
+const free = await at();
+await page.mouse.up();
+await page.evaluate(() => { window.videdit.store.snapping = true; });
+ok('snapping off leaves the playhead free', Math.abs(free - 445 / lane.zoom) < 1e-6, `${free}`);
+
 ok('no console errors', errors.length === 0, errors.join(' | '));
 
 await browser.close();

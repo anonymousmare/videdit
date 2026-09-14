@@ -63,6 +63,13 @@ the first free track *above* whatever is already there.
 tracks, snapping to clip edges and the playhead, ripple-free by default. Clips
 never overlap on one track: an intruder is pushed to a free lane.
 
+**Scrubbing** — drag the playhead from the ruler or from any empty part of a
+track, the way CapCut does; hold the pointer past either edge and the timeline
+scrolls along with you. While snapping is on the playhead lands on clip edges
+when one is near and on whole frames otherwise, so parking it exactly on the end
+of a shot is one drag rather than a fight with sub-frame pixels. Turn snapping
+off (the magnet) for a free playhead.
+
 **Text with shadows** — font, size, weight, colour, alignment, line height,
 letter spacing, wrap width, plus a drop shadow (colour, opacity, blur, offset),
 an outline, and a background box. Four presets to start from.
@@ -124,6 +131,7 @@ media files again and relinks them by filename.
 | `Ctrl` + wheel | zoom the timeline around the pointer |
 | `Shift` while dragging | constrain to one axis |
 | right-click a track head | delete that track |
+| drag the ruler or empty track space | scrub the playhead |
 
 ## Tests
 
@@ -137,7 +145,8 @@ Drives a real Chromium: imports a 1733 × 2011 checkerboard whose colour at ever
 coordinate is known, renders a frame, and reads the canvas back to assert that
 each source pixel landed on exactly one canvas pixel — plus fades, splitting,
 undo, pan interpolation, track stacking, text and its shadow, the visualiser
-spectrum, the offline audio mixdown and a still export.
+spectrum, the offline audio mixdown, a still export, and a real mouse drag
+through empty track space to check scrubbing and playhead snapping.
 
 ## Layout of the code
 
