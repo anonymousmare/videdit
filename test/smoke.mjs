@@ -216,6 +216,92 @@ await page.mouse.up();
 await page.evaluate(() => { window.videdit.store.snapping = true; });
 ok('snapping off leaves the playhead free', Math.abs(free - 445 / lane.zoom) < 1e-6, `${free}`);
 
+// The wheel runs along the timeline; only Alt and the track heads scroll down it.
+const wheeled = await page.evaluate(() => {
+  const { store, timeline } = window.videdit;
+  // long enough that the timeline actually has somewhere to scroll to
+  store.allClips()[0].duration = 120;
+  store.changed();
+  timeline.setZoom(90);
+  timeline.scroll.scrollLeft = 0;
+  const laneEl = timeline.laneEls.get(store.project.tracks[0].id);
+  const r = laneEl.getBoundingClientRect();
+  const fire = (opts) => {
+    const target = opts.target || laneEl;
+    const ev = new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: r.left + 200, clientY: r.top + 8, ...opts });
+    target.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  };
+  const out = {};
+  out.tookIt = fire({ deltaY: 240 });
+  out.forward = timeline.scroll.scrollLeft;
+  fire({ deltaY: -90 });
+  out.back = timeline.scroll.scrollLeft;
+  const held = timeline.scroll.scrollLeft;
+  out.alt = fire({ deltaY: 240, altKey: true }) || timeline.scroll.scrollLeft !== held;
+  out.head = fire({ deltaY: 240, target: document.querySelector('.tl-heads .thead') })
+    || timeline.scroll.scrollLeft !== held;
+  const z = store.zoom;
+  fire({ deltaY: -100, ctrlKey: true });
+  out.zoomed = store.zoom > z;
+  return out;
+});
+ok('the wheel runs the timeline forward and back', wheeled.tookIt && wheeled.forward === 240 && wheeled.back === 150,
+  JSON.stringify(wheeled));
+ok('alt and the track heads keep the vertical scroll', !wheeled.alt && !wheeled.head);
+ok('ctrl+wheel still zooms', wheeled.zoomed);
+
+// A dropped asset must start exactly under the pointer — the drag image is
+// pinned by its left edge, so anywhere else reads as the drop being ignored.
+const dropped = await page.evaluate(() => {
+  const { store, media, timeline } = window.videdit;
+  store.project.tracks.forEach((t) => (t.clips.length = 0));
+  store.changed();
+  timeline.setZoom(90);
+  timeline.scroll.scrollLeft = 0;
+  const asset = media.list().find((a) => a.kind === 'image');
+  const track = store.project.tracks.find((t) => t.kind === 'video');
+  const laneEl = timeline.laneEls.get(track.id);
+  const y = laneEl.getBoundingClientRect().top + 8;
+  const x = timeline.lanes.getBoundingClientRect().left + 437;
+  const dt = new DataTransfer();
+  dt.setData('text/videdit-asset', asset.id);
+  const send = (type) => laneEl.dispatchEvent(
+    new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y }));
+  store.snapping = false; // measure the raw landing spot, without the tolerance
+  timeline.beginAssetDrag(asset);
+  send('dragover');
+  const ghost = document.querySelector('.drop-ghost');
+  const preview = { left: parseFloat(ghost.style.left), width: parseFloat(ghost.style.width), shown: ghost.style.display };
+  send('drop');
+  store.snapping = true;
+  const clip = store.allClips()[0];
+  return { x: timeline.timeToX(clip.start), width: timeline.timeToX(clip.duration), preview,
+    cleared: document.querySelector('.drop-ghost').style.display };
+});
+ok('a dropped asset lands under the pointer', Math.abs(dropped.x - 437) < 0.01, JSON.stringify(dropped));
+ok('the ghost previews that same span', dropped.preview.shown !== 'none' && Math.abs(dropped.preview.left - 437) < 0.01
+  && Math.abs(dropped.preview.width - dropped.width) < 0.01, JSON.stringify(dropped.preview));
+ok('the ghost clears on drop', dropped.cleared === 'none');
+
+// The waveform buffer has to match its box in device pixels, or it is resampled.
+const wave = await page.evaluate(() => {
+  const { store, media, timeline } = window.videdit;
+  store.project.tracks.forEach((t) => (t.clips.length = 0));
+  timeline.appendAsset(media.list().find((a) => a.kind === 'audio').id, 0);
+  store.changed();
+  const cv = document.querySelector('.clip[data-type="audio"] canvas.wave');
+  const box = cv.getBoundingClientRect();
+  const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+  let ink = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 0) ink++;
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  return { w: cv.width, h: cv.height, wantW: Math.round(Math.round(box.width) * dpr),
+    wantH: Math.round(Math.round(box.height) * dpr), ink };
+});
+ok('the waveform is drawn at device resolution', wave.w === wave.wantW && wave.h === wave.wantH, JSON.stringify(wave));
+ok('the waveform draws its peaks', wave.ink > 500, `${wave.ink} px`);
+
 // Pause/resume: the transport must pick up where it stopped, never behind it.
 const resume = await page.evaluate(async () => {
   const { store, playback } = window.videdit;

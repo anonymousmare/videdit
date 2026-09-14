@@ -31,6 +31,8 @@ export class Timeline {
     this.snapEl = document.getElementById('snapline');
     this.laneEls = new Map();
     this.clipEls = new Map();
+    this.dragAsset = null;
+    this.ghostEl = null;
     this.bind();
   }
 
@@ -70,7 +72,19 @@ export class Timeline {
       this.scrub(e);
     });
 
-    // Ctrl+wheel = zoom around the pointer, shift+wheel = horizontal pan.
+    // Dragging an asset off the lanes entirely must take its preview with it;
+    // moving between a lane and a clip inside it is not leaving.
+    this.lanes.addEventListener('dragleave', (e) => {
+      if (!this.lanes.contains(e.relatedTarget)) {
+        this.hideGhost();
+        this.showSnap(null);
+      }
+    });
+
+    // The wheel runs *along* the timeline — jumping back and forth in time is
+    // the constant move, walking the track stack is not. Ctrl/Cmd+wheel zooms
+    // around the pointer; Alt+wheel, and the wheel over the track-head column,
+    // keep the ordinary vertical scroll.
     this.scroll.addEventListener(
       'wheel',
       (e) => {
@@ -81,10 +95,16 @@ export class Timeline {
           this.setZoom(this.zoom * (e.deltaY < 0 ? 1.14 : 1 / 1.14));
           const nx = this.timeToX(anchorT) - (e.clientX - rect.left);
           this.scroll.scrollLeft = Math.max(0, this.scroll.scrollLeft + nx);
-        } else if (e.shiftKey) {
-          e.preventDefault();
-          this.scroll.scrollLeft += e.deltaY;
+          return;
         }
+        if (e.altKey || (!e.shiftKey && e.target?.closest?.('.tl-heads'))) return;
+        // A trackpad puts a sideways swipe on deltaX; a wheel only has deltaY.
+        const raw = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        if (!raw) return;
+        // deltaMode 1 = lines, 2 = pages; both need turning into pixels.
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.scroll.clientWidth : 1;
+        e.preventDefault();
+        this.scroll.scrollLeft = Math.max(0, this.scroll.scrollLeft + raw * unit);
       },
       { passive: false },
     );
@@ -107,6 +127,7 @@ export class Timeline {
   // ------------------------------------------------------------- rendering
   render() {
     const tracks = this.store.project.tracks;
+    this.hideGhost();
     this.heads.textContent = '';
     // keep the playhead + snapline nodes, rebuild the lanes
     [...this.lanes.querySelectorAll('.lane')].forEach((n) => n.remove());
@@ -251,20 +272,33 @@ export class Timeline {
     if (node._wave) this.drawWave(node._wave, clip, width);
   }
 
+  /**
+   * The canvas is stretched to the clip box by CSS, so it has to be sized in
+   * *device* pixels — a fixed 44px-tall buffer blown up to the lane height on
+   * a 2x screen is what made the waveform look smeared. Every bar is then one
+   * whole device pixel wide, on an integer boundary, so nothing antialiases.
+   */
   drawWave(cv, clip, width) {
     const asset = this.media.get(clip.assetId);
     const peaks = asset?.peaks;
-    const w = Math.min(4000, Math.max(2, Math.round(width)));
-    const h = 44;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    // The laid-out box, not the clip width: the canvas sits inside the clip's
+    // 1px border, and a buffer even two pixels out gets resampled on the way in.
+    const cssW = clamp(Math.round(cv.clientWidth || width), 2, 4000);
+    const cssH = Math.max(8, Math.round(cv.clientHeight || 44));
+    const w = Math.min(8192, Math.round(cssW * dpr));
+    const h = Math.round(cssH * dpr);
     if (cv.width !== w || cv.height !== h) {
       cv.width = w;
       cv.height = h;
     }
     const g = cv.getContext('2d');
+    g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, w, h);
+    const mid = Math.round(h / 2);
     if (!peaks) {
       g.fillStyle = 'rgba(255,255,255,.22)';
-      g.fillRect(0, h / 2 - 1, w, 2);
+      g.fillRect(0, mid - Math.round(dpr / 2), w, Math.max(1, Math.round(dpr)));
       return;
     }
     const rate = clip.speed || 1;
@@ -273,6 +307,7 @@ export class Timeline {
     const b0 = t0 * PEAK_RATE;
     const b1 = t1 * PEAK_RATE;
     const n = peaks.length / 2;
+    const amp = Math.max(1, mid - Math.round(2 * dpr));
     g.fillStyle = 'rgba(255,255,255,.62)';
     for (let x = 0; x < w; x++) {
       const i0 = Math.floor(b0 + ((b1 - b0) * x) / w);
@@ -284,8 +319,8 @@ export class Timeline {
         lo = Math.min(lo, peaks[i * 2]);
         hi = Math.max(hi, peaks[i * 2 + 1]);
       }
-      const y0 = h / 2 - hi * (h / 2 - 2);
-      const y1 = h / 2 - lo * (h / 2 - 2);
+      const y0 = Math.round(mid - hi * amp);
+      const y1 = Math.round(mid - lo * amp);
       g.fillRect(x, y0, 1, Math.max(1, y1 - y0));
     }
   }
@@ -645,6 +680,62 @@ export class Timeline {
   }
 
   // ------------------------------------------------------------- drop
+  /**
+   * The one place a drag pointer turns into a start time. The drag image is
+   * anchored so its left edge sits on the pointer (see Library.assetCard), so
+   * the pointer *is* the clip start — no guessing where the dropped block
+   * begins, and the same number is used for the preview and for the drop.
+   */
+  dropTime(clientX) {
+    const raw = Math.max(0, this.xToTime(clientX - this.lanes.getBoundingClientRect().left));
+    const s = this.snap(raw, this.snapTargets());
+    return { time: Math.max(0, s.time), hit: s.hit };
+  }
+
+  /** Held while an asset is dragged out of the library, for the live preview. */
+  beginAssetDrag(asset) {
+    this.dragAsset = asset;
+  }
+
+  endAssetDrag() {
+    this.dragAsset = null;
+    this.hideGhost();
+    this.showSnap(null);
+  }
+
+  /** Outline of exactly where — and on which lane — the drop will land. */
+  showGhost(lane, start, dur) {
+    if (!this.ghostEl) {
+      this.ghostEl = el('div', { class: 'drop-ghost' });
+      this.lanes.append(this.ghostEl);
+    }
+    const g = this.ghostEl;
+    g.style.display = 'block';
+    g.style.left = `${this.timeToX(start)}px`;
+    g.style.width = `${Math.max(2, this.timeToX(dur))}px`;
+    g.style.top = `${lane.offsetTop + 3}px`;
+    g.style.height = `${Math.max(6, lane.offsetHeight - 7)}px`;
+  }
+
+  hideGhost() {
+    if (this.ghostEl) this.ghostEl.style.display = 'none';
+  }
+
+  previewDrop(lane, track, clientX) {
+    const asset = this.dragAsset;
+    if (!asset || (asset.kind === 'audio') !== (track.kind === 'audio')) {
+      this.hideGhost();
+      this.showSnap(null);
+      return;
+    }
+    const dur = clipForAsset(asset).duration;
+    const { time, hit } = this.dropTime(clientX);
+    // A busy lane sends the clip elsewhere; show it where it will actually go.
+    const dest = this.store.findSlot(track.kind, time, dur, track.id) || track;
+    this.showSnap(hit);
+    this.showGhost(this.laneEls.get(dest.id) || lane, time, dur);
+  }
+
   wireDrop(lane, track) {
     lane.addEventListener('dragover', (e) => {
       const kind = e.dataTransfer.types.includes('text/videdit-asset') ? 'asset' : null;
@@ -652,19 +743,20 @@ export class Timeline {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       lane.classList.add('drop');
+      this.previewDrop(lane, track, e.clientX);
     });
     lane.addEventListener('dragleave', () => lane.classList.remove('drop'));
     lane.addEventListener('drop', (e) => {
       e.preventDefault();
       lane.classList.remove('drop');
+      this.endAssetDrag();
       const assetId = e.dataTransfer.getData('text/videdit-asset');
       if (!assetId) return;
-      const rect = lane.getBoundingClientRect();
-      const t = Math.max(0, this.xToTime(e.clientX - rect.left));
-      this.dropAsset(assetId, track, t);
+      this.dropAsset(assetId, track, this.dropTime(e.clientX).time);
     });
   }
 
+  /** `time` is already snapped by dropTime(); it is the clip's start. */
   dropAsset(assetId, track, time) {
     const asset = this.media.get(assetId);
     if (!asset) return;
@@ -674,8 +766,7 @@ export class Timeline {
       return;
     }
     const clip = clipForAsset(asset);
-    const snapped = this.snap(time, this.snapTargets()).time;
-    clip.start = Math.max(0, snapped);
+    clip.start = Math.max(0, time);
     const dest = this.store.findSlot(track.kind, clip.start, clip.duration, track.id) || track;
     this.store.addClip(dest.id, clip, { label: `Add ${asset.name}` });
   }

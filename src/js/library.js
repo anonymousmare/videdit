@@ -50,8 +50,7 @@ export class Library {
       const banner = el('div', { class: 'offline-banner' });
       banner.append(icon('info', 14));
       banner.append(el('div', { class: 'txt' },
-        el('b', {}, `${missing.length} file${missing.length > 1 ? 's' : ''} offline`),
-        el('span', {}, 'Clips are still on the timeline — they just have nothing to play.')));
+        el('b', {}, `${missing.length} file${missing.length > 1 ? 's' : ''} offline`)));
       const b = el('button', { class: 'btn sm', type: 'button' }, 'Relink...');
       b.addEventListener('click', () => this.relinker.open());
       banner.append(b);
@@ -61,7 +60,6 @@ export class Library {
     const zone = el('div', { class: 'dropzone' });
     zone.append(icon('upload', 22));
     zone.append(el('b', {}, 'Import media'));
-    zone.append(el('span', {}, 'Drop screenshots, video or audio here — whole folders work too. Images keep their exact pixel size.'));
     zone.addEventListener('click', () => this.pick());
     ['dragenter', 'dragover'].forEach((ev) =>
       zone.addEventListener(ev, (e) => {
@@ -75,11 +73,7 @@ export class Library {
     this.body.append(zone);
 
     const assets = this.media.list();
-    if (!assets.length) {
-      this.body.append(el('div', { class: 'hint', style: { marginTop: '12px' } },
-        'Nothing imported yet. Drag an asset onto a track, or double-click it to drop it at the playhead.'));
-      return;
-    }
+    if (!assets.length) return;
     const grid = el('div', { class: 'asset-grid' });
     for (const a of assets) grid.append(this.assetCard(a));
     this.body.append(grid);
@@ -117,23 +111,32 @@ export class Library {
       e.dataTransfer.setData('text/videdit-asset', a.id);
       e.dataTransfer.setData('text/plain', a.name); // Firefox wants a standard type too
       e.dataTransfer.effectAllowed = 'copy';
+      // The default drag image is the whole card, grabbed wherever the pointer
+      // happened to be, so the block always landed somewhere other than where
+      // it looked like it would. A small chip pinned by its left edge to the
+      // pointer makes the pointer the clip's start, exactly as it reads.
+      const chip = el('div', { class: 'drag-chip' }, a.name);
+      document.body.append(chip);
+      e.dataTransfer.setDragImage(chip, 0, chip.offsetHeight / 2);
+      setTimeout(() => chip.remove(), 0);
+      this.timeline.beginAssetDrag(a);
     });
+    card.addEventListener('dragend', () => this.timeline.endAssetDrag());
     card.addEventListener('dblclick', () => this.timeline.appendAsset(a.id));
     return card;
   }
 
   // ------------------------------------------------------------------ text
+  // Presets land at the playhead on the first free video track.
   renderText() {
-    this.body.append(el('div', { class: 'hint', style: { marginBottom: '10px' } },
-      'Presets land at the playhead on the first free video track. Shadow, outline and a background box live in Properties.'));
     const presets = [
-      ['Title', { size: 128, weight: 800, letterSpacing: 2, content: 'TITLE' }, 'A big centred title with a soft drop shadow.'],
-      ['Subtitle', { size: 54, weight: 500, letterSpacing: 6, content: 'a subtitle', shadow: { enabled: true, color: '#000000', opacity: 0.6, blur: 10, offsetX: 0, offsetY: 3 } }, 'Smaller, wide-tracked line.'],
-      ['Lower third', { size: 44, weight: 600, align: 'left', content: 'Name\\nRole', box: { enabled: true, color: '#000000', opacity: 0.55, padX: 26, padY: 14, radius: 6 } }, 'Left-aligned with a background box.'],
-      ['Hard outline', { size: 96, weight: 900, content: 'IMPACT', stroke: { enabled: true, color: '#000000', width: 7 }, shadow: { enabled: true, color: '#000000', opacity: 0.85, blur: 0, offsetX: 6, offsetY: 6 } }, 'Outline plus a hard offset shadow.'],
+      ['Title', { size: 128, weight: 800, letterSpacing: 2, content: 'TITLE' }],
+      ['Subtitle', { size: 54, weight: 500, letterSpacing: 6, content: 'a subtitle', shadow: { enabled: true, color: '#000000', opacity: 0.6, blur: 10, offsetX: 0, offsetY: 3 } }],
+      ['Lower third', { size: 44, weight: 600, align: 'left', content: 'Name\\nRole', box: { enabled: true, color: '#000000', opacity: 0.55, padX: 26, padY: 14, radius: 6 } }],
+      ['Hard outline', { size: 96, weight: 900, content: 'IMPACT', stroke: { enabled: true, color: '#000000', width: 7 }, shadow: { enabled: true, color: '#000000', opacity: 0.85, blur: 0, offsetX: 6, offsetY: 6 } }],
     ];
-    for (const [name, over, note] of presets) {
-      this.body.append(this.presetCard(name, 'type', note, () => {
+    for (const [name, over] of presets) {
+      this.body.append(this.presetCard(name, 'type', () => {
         const text = makeTextStyle({ ...over, content: String(over.content).replace(/\\n/g, '\n') });
         const clip = makeClip('text', { name, duration: 3, overrides: { text } });
         clip.y = name === 'Lower third' ? Math.round(this.store.project.height * 0.32) : 0;
@@ -144,12 +147,9 @@ export class Library {
   }
 
   // ------------------------------------------------------------- visualiser
+  // A visualiser goes on a video track and reads the master audio mix, so it
+  // reacts to whatever is playing underneath it.
   renderViz() {
-    const hasAudio = this.media.list().some((a) => a.audioBuffer);
-    this.body.append(el('div', { class: 'hint', style: { marginBottom: '10px' } },
-      hasAudio
-        ? 'Drop a visualiser on a video track. It reads the master audio mix by default, so it reacts to whatever is playing underneath it.'
-        : 'Import an audio file first — the visualiser draws the spectrum of the audio on your timeline.'));
     const presets = [
       ['Bars', 'bars', { bars: 64, height: 260, width: 900 }],
       ['Mirrored bars', 'mirror', { bars: 72, height: 320, width: 1000, gap: 0.4 }],
@@ -157,7 +157,7 @@ export class Library {
       ['Radial', 'radial', { bars: 96, height: 720, width: 720, gap: 0.45 }],
     ];
     for (const [name, style, over] of presets) {
-      this.body.append(this.presetCard(name, 'waveform', 'Reacts to the master mix.', () => {
+      this.body.append(this.presetCard(name, 'waveform', () => {
         const viz = makeVisualizer({ style, ...over });
         const clip = makeClip('visualizer', { name: `${name} visualiser`, duration: 5, overrides: { visualizer: viz } });
         clip.y = Math.round(this.store.project.height * 0.3);
@@ -166,14 +166,13 @@ export class Library {
     }
   }
 
-  presetCard(name, iconName, note, onAdd) {
+  presetCard(name, iconName, onAdd) {
     const card = el('div', {
       class: 'asset',
       style: { display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', cursor: 'pointer', marginBottom: '8px' },
     });
     card.append(icon(iconName, 18));
-    card.append(el('div', { style: { flex: '1', minWidth: '0' } },
-      el('div', { class: 'nm' }, name), el('div', { class: 'sub', style: { fontFamily: 'inherit' } }, note)));
+    card.append(el('div', { style: { flex: '1', minWidth: '0' } }, el('div', { class: 'nm' }, name)));
     const b = el('button', { class: 'btn sm icon', type: 'button', title: `Add ${name}` });
     b.append(icon('plus', 13));
     card.append(b);
