@@ -592,6 +592,31 @@ const adaptive = await page.evaluate(() => {
     offIsOne: exporter.samplesFor(500, 0),
   };
 });
+const autoShutter = await page.evaluate(() => {
+  const { exporter } = window.videdit;
+  // Measured rule: an exposure only cancels the subpixel crawl if it sweeps a
+  // whole pixel of phase. So the shutter opens up on slow motion and is left
+  // alone once the base already sweeps more than a pixel.
+  const at = (px) => exporter.shutterFor(px, 0.5);
+  return {
+    crawl: +at(0.9).toFixed(3),     // 180 deg would sweep 0.45 px: not enough
+    edge: +at(2).toFixed(3),        // exactly one pixel swept at 180 deg
+    fast: +at(4.4).toFixed(3),      // already sweeping 2.2 px, leave it
+    // Sweep a whole pixel whenever the motion offers one. Under 1 px per frame
+    // it cannot: the clip does not travel that far in a frame, and a shutter
+    // cannot borrow time from the next one. Then take everything there is.
+    sweeps: [0.5, 0.9, 1.5, 2, 4.4, 30].map((px) => [px, +(px * at(px)).toFixed(3)]),
+    offStaysOff: exporter.shutterFor(0.9, 0),
+    stillStays: exporter.shutterFor(0, 0.5),
+  };
+});
+ok('the shutter opens up until it sweeps a whole pixel, then stops',
+  autoShutter.crawl === 1 && autoShutter.edge === 0.5 && autoShutter.fast === 0.5
+  && autoShutter.sweeps.every(([px, v]) => v >= Math.min(px, 1) - 1e-9)
+  && autoShutter.offStaysOff === 0
+  && autoShutter.stillStays === 0.5,
+  JSON.stringify(autoShutter));
+
 ok('blur samples stay under a pixel apart across real pan speeds',
   adaptive.worst <= 1 && adaptive.capped === 256 && adaptive.offIsOne === 1,
   JSON.stringify(adaptive));

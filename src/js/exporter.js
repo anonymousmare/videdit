@@ -104,9 +104,10 @@ export class Exporter {
     const fpsSel = el('select', { class: 'inp' }, ...fpsChoices.map((n) =>
       el('option', { value: String(n), selected: n === p.fps }, n === p.fps ? `${n} fps · project rate` : `${n} fps`)));
     const blurSel = el('select', { class: 'inp' },
+      el('option', { value: 'auto', selected: true }, 'Auto — 180°, opening up on slow motion'),
       el('option', { value: '0' }, 'Off — one instant per frame'),
       el('option', { value: '0.25' }, 'Crisp · 90° shutter'),
-      el('option', { value: '0.5', selected: true }, 'Natural · 180° shutter'),
+      el('option', { value: '0.5' }, 'Natural · 180° shutter'),
       el('option', { value: '1' }, 'Dreamy · 360° shutter'),
     );
 
@@ -142,7 +143,8 @@ export class Exporter {
     const sync = () => {
       const m = modeSel.value;
       const fps = Number(fpsSel.value);
-      const shutter = Number(blurSel.value);
+      const auto = blurSel.value === 'auto';
+      const shutter = auto ? 0.5 : Number(blurSel.value);
       const frames = Math.max(1, Math.round(dur * fps));
       rowVideo.style.display = m === 'video' ? '' : 'none';
       rowQual.style.display = m === 'video' ? '' : 'none';
@@ -156,12 +158,16 @@ export class Exporter {
           `Captured in real time, so it takes about ${fmtTime(dur, p.fps, false)}. Leave the tab in the foreground. ` +
           `Video codecs are lossy — for a pixel-exact master use the PNG sequence.`;
       } else {
-        const blur = shutter > 0
-          ? `Moving frames are exposed across a ${Math.round(shutter * 360)}° shutter, sampled once per pixel of ` +
-            `travel so the smear stays continuous however fast the move — the slow part of the export, and the ` +
-            `part that buys the smoothness.`
-          : `Every frame is a single instant — exactly what the preview draws. At ${fps} fps this matches what ` +
-            `you see on screen; blur goes past it.`;
+        const blur = auto
+          ? `Moving frames are exposed across a 180° shutter, opened towards 360° wherever the motion is slow ` +
+            `enough that a narrow one would leave fine detail crawling. Samples run one per pixel of travel, so ` +
+            `the smear stays continuous however fast the move.`
+          : shutter > 0
+            ? `Moving frames are exposed across a ${Math.round(shutter * 360)}° shutter, sampled once per pixel ` +
+              `of travel. Below about 2 px of travel per frame a shutter this narrow leaves fine detail crawling — ` +
+              `Auto handles that for you.`
+            : `Every frame is a single instant — exactly what the preview draws. At ${fps} fps this matches what ` +
+              `you see on screen; blur goes past it.`;
         info.innerHTML =
           `${frames} PNG frames at ${p.width} x ${p.height} (${fps} fps) plus <code>audio.wav</code>. ${blur}` +
           `<br>Mux them losslessly with:<br><code>ffmpeg -framerate ${fps} -i frame_%05d.png -i audio.wav ` +
@@ -205,7 +211,8 @@ export class Exporter {
         else await this.exportFrames({
           dest: destSel.value,
           fps: Number(fpsSel.value),
-          shutter: Number(blurSel.value),
+          auto: blurSel.value === 'auto',
+          shutter: blurSel.value === 'auto' ? 0.5 : Number(blurSel.value),
         }, setProgress);
       } catch (err) {
         console.error(err);
@@ -289,6 +296,26 @@ export class Exporter {
   }
 
   /**
+   * The shutter a frame moving `px` pixels should actually use.
+   *
+   * Measured, not guessed. A subpixel translation makes fine detail pulse as the
+   * phase walks across a pixel — text and hairlines crawl — and an exposure only
+   * cancels that pulse if it sweeps a whole pixel of phase. At 0.9 px per frame
+   * a 180° shutter sweeps 0.45 px and leaves the crawl plainly visible; 360°
+   * sweeps the full 0.9 and takes it down to the floor. Past roughly 2 px per
+   * frame the base shutter already sweeps more than a pixel and there is nothing
+   * left to fix.
+   *
+   * Opening up is nearly free exactly where it is needed: at 0.9 px per frame a
+   * 360° shutter smears all of 0.9 px. Fast motion is what cannot afford a wide
+   * shutter, and fast motion is what does not need one.
+   */
+  shutterFor(px, base) {
+    if (base <= 0 || px <= 0) return base;
+    return clamp(Math.max(base, 1 / px), 0, 1);
+  }
+
+  /**
    * How many samples one exposure needs.
    *
    * What matters is the gap between consecutive samples, not how many there are:
@@ -349,7 +376,7 @@ export class Exporter {
   }
 
   // ---------------------------------------------------------- PNG sequence
-  async exportFrames({ dest, fps, shutter }, progress) {
+  async exportFrames({ dest, fps, shutter, auto = false }, progress) {
     const p = this.store.project;
     const dur = this.store.duration();
     const total = Math.max(1, Math.round(dur * fps));
@@ -384,8 +411,9 @@ export class Exporter {
       }
       const centre = (f + 0.5) / fps;
       const px = this.motionPixelsPerFrame(centre, fps);
+      const sh = auto ? this.shutterFor(px, shutter) : shutter;
       const times = px > 0
-        ? this.shutterSamples(f, fps, this.samplesFor(px, shutter), shutter)
+        ? this.shutterSamples(f, fps, this.samplesFor(px, sh), sh)
         : [centre];
       await this.composeFrame(times);
       const blob = await new Promise((r) => this.renderer.canvas.toBlob(r, 'image/png'));

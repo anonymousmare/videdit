@@ -125,8 +125,15 @@ the file is. If you want the export to match the preview exactly, that is 60 fps
 with motion blur off — the preview draws one instant per frame too.
 
 **Motion blur** exposes each moving frame across a shutter interval instead of
-freezing one instant, the way a camera does. 180° is the film standard and the
-default; 90° is crisper and strobes more; 360° smears the most. The number of
+freezing one instant, the way a camera does. Leave it on Auto: 180° is the film
+standard, but a subpixel translation makes fine detail — text, hairlines — pulse
+as it crosses pixel boundaries, and an exposure only cancels that pulse if it
+sweeps a whole pixel of phase. At 0.9 px per frame a 180° shutter sweeps 0.45 px
+and the crawl is plainly visible; 360° sweeps the full 0.9 and removes it. Auto
+opens the shutter up exactly where that is needed, which is also exactly where
+it is free — 360° at 0.9 px per frame smears all of 0.9 px. Past about 2 px per
+frame nothing needs doing and it stays at 180°. The fixed angles are there if
+you want a look rather than the cleanest frame. The number of
 samples follows how fast the frame is actually moving, keeping them under a
 pixel apart, because what makes a smear look like a smear rather than a stack of
 ghosts is the gap between samples, not how many there are. The averaging happens
@@ -135,6 +142,18 @@ byte 128 is about 22% of the light of byte 255, not half — without which a
 bright title crossing black smears out roughly 60 levels too dark. Only frames
 with something moving pay for any of it, so a static trailer exports as fast as
 it ever did.
+
+### Why the preview always looks better
+
+It is not lying to you exactly, but it is not showing you the file either. The
+preview canvas renders at full project resolution and is then displayed *fitted*
+to the pane — a 1920-wide project shown about 800 wide. That downscale is a
+filter, and it quietly removes the aliasing and crawl you would see at 1:1. The
+export has no such luxury: it is watched at native size.
+
+So the preview is the easier picture, not the better one, and "match the preview"
+is the wrong target — the export can be made cleaner than what the preview
+shows. If you want to compare like with like, set the preview zoom to 100%.
 
 One trade comes with this: a clip that is moving is drawn at subpixel positions
 and resampled, so it softens very slightly while it travels. A clip that is
