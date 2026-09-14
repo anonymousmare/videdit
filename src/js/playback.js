@@ -66,8 +66,13 @@ export class Playback {
   clockTime() {
     const ctx = getCtx();
     if (ctx.state === 'running') this._audioOk = true;
-    if (this._audioOk) return this._from + (ctx.currentTime - this._t0);
-    return this._from + (performance.now() - this._wall0) / 1000;
+    const elapsed = this._audioOk
+      ? ctx.currentTime - this._t0
+      : (performance.now() - this._wall0) / 1000;
+    // Both baselines sit at the end of the engine's lead-in, so `elapsed` is
+    // negative until the scheduled audio actually starts. Hold the playhead
+    // where the user pressed play instead of letting it run backwards.
+    return this._from + Math.max(0, elapsed);
   }
 
   play(from = null) {
@@ -77,9 +82,12 @@ export class Playback {
     resumeCtx();
     this.audio.resetSmoothing();
     this._from = at;
-    this._wall0 = performance.now();
     this._audioOk = false;
+    const ctx = getCtx();
+    // audio.start() schedules the mix a beat ahead of now; timeline position
+    // `at` corresponds to that returned context time, not to this instant.
     this._t0 = this.audio.start(at);
+    this._wall0 = performance.now() + Math.max(0, this._t0 - ctx.currentTime) * 1000;
     this.store.playhead = at;
     this.playing = true;
     this.primeVideos(at);
@@ -88,6 +96,9 @@ export class Playback {
 
   pause() {
     if (!this.playing) return;
+    // Settle on the clock time now, not on the last frame the loop drew, so
+    // resuming carries on from what was actually heard rather than replaying.
+    this.store.playhead = clamp(this.clockTime(), 0, Math.max(0, this.store.duration()));
     this.playing = false;
     this.audio.stop();
     this.pauseVideos();

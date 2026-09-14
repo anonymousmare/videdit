@@ -216,6 +216,47 @@ await page.mouse.up();
 await page.evaluate(() => { window.videdit.store.snapping = true; });
 ok('snapping off leaves the playhead free', Math.abs(free - 445 / lane.zoom) < 1e-6, `${free}`);
 
+// Pause/resume: the transport must pick up where it stopped, never behind it.
+const resume = await page.evaluate(async () => {
+  const { store, playback } = window.videdit;
+  const frame = () => new Promise((r) => requestAnimationFrame(r));
+  playback.seek(2);
+  playback.play();
+  for (let i = 0; i < 20; i++) await frame();
+  playback.pause();
+  const paused = store.playhead;
+  playback.play();
+  let min = Infinity;
+  for (let i = 0; i < 12; i++) {
+    await frame();
+    min = Math.min(min, store.playhead);
+  }
+  playback.pause();
+  return { paused, min };
+});
+ok('resuming does not rewind the playhead', resume.min >= resume.paused - 1e-3,
+  `paused ${resume.paused.toFixed(4)} -> min ${resume.min.toFixed(4)}`);
+
+// Dropping on the import zone must not import through both handlers.
+const copies = await page.evaluate(async () => {
+  const { media } = window.videdit;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 8;
+  const c2d = cv.getContext('2d');
+  c2d.fillStyle = '#f0f';
+  c2d.fillRect(0, 0, 8, 8);
+  const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+  const dt = new DataTransfer();
+  dt.items.add(new File([blob], 'dropped.png', { type: 'image/png' }));
+  const zone = document.querySelector('.dropzone');
+  zone.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  const named = () => media.list().filter((a) => a.name === 'dropped.png').length;
+  for (let i = 0; i < 60 && !named(); i++) await new Promise((r) => setTimeout(r, 50));
+  await new Promise((r) => setTimeout(r, 500)); // let a second import land if one is coming
+  return named();
+});
+ok('dropping a file imports it once', copies === 1, `${copies} copies`);
+
 ok('no console errors', errors.length === 0, errors.join(' | '));
 
 await browser.close();
