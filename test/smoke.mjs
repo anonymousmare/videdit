@@ -127,17 +127,42 @@ const feats = await page.evaluate(async () => {
   out.textTrack = store.project.tracks.findIndex((t) => t.clips.some((c) => c.type === 'text'));
   out.imageTrack = store.project.tracks.findIndex((t) => t.clips.some((c) => c.type === 'image'));
 
-  renderer.render(2);
   const g = renderer.canvas.getContext('2d');
   const b = renderer.boxFor(txt, 2);
-  const d = g.getImageData(Math.round(b.left), Math.round(b.top), Math.round(b.w), Math.round(b.h)).data;
-  let white = 0, dark = 0;
-  for (let i = 0; i < d.length; i += 4) {
-    if (d[i] === 255 && d[i + 1] === 255 && d[i + 2] === 255) white++;
-    if (d[i] < 12 && d[i + 1] < 12 && d[i + 2] < 12) dark++;
-  }
-  out.textPixels = white;
-  out.shadowPixels = dark;
+  const countIn = (box) => {
+    const d = g.getImageData(Math.round(box.left), Math.round(box.top),
+      Math.round(box.w), Math.round(box.h)).data;
+    let white = 0, dark = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] === 255 && d[i + 1] === 255 && d[i + 2] === 255) white++;
+      if (d[i] < 12 && d[i + 1] < 12 && d[i + 2] < 12) dark++;
+    }
+    return { white, dark };
+  };
+  // Sixty pixels of background well above the title — clear of the glyphs and
+  // of the shadow's blur radius, so this reads the image and nothing else.
+  const spread = () => {
+    const d = g.getImageData(Math.round(b.left), Math.round(b.top) - 200, 60, 1).data;
+    let lo = 255, hi = 0;
+    for (let i = 0; i < d.length; i += 4) { lo = Math.min(lo, d[i]); hi = Math.max(hi, d[i]); }
+    return hi - lo;
+  };
+
+  // The image clip carries a pan now, and a moving clip is drawn subpixel and
+  // resampled — which averages this fixture's 1-pixel checker into flat grey.
+  // Measure the shadow over a still background, and pin the trade separately.
+  clip.motion.enabled = false;
+  renderer.render(2);
+  const still = countIn(b);
+  out.textPixels = still.white;
+  out.shadowPixels = still.dark;
+  out.stillSpread = spread();
+
+  clip.motion.enabled = true;
+  renderer.render(2);
+  out.movingShadowPixels = countIn(b).dark;
+  out.movingSpread = spread();
+  clip.motion.enabled = false;
   const bands = audio.spectrumAt(2.5, viz);
   out.bands = { n: bands.length, peak: Math.max(...bands) };
   return out;
@@ -152,6 +177,14 @@ ok('new overlays stack above existing clips', feats.textTrack < feats.imageTrack
   `text on ${feats.textTrack}, image on ${feats.imageTrack}`);
 ok('text renders', feats.textPixels > 1000, `${feats.textPixels} px`);
 ok('text drop shadow renders', feats.shadowPixels > 50, `${feats.shadowPixels} px`);
+// The cost of a smooth pan, stated out loud: a clip in motion is resampled, so
+// the checker under it flattens. A still clip keeps its hard 1-pixel edges.
+// Stated as a ratio, not an absolute: how much contrast a resample keeps is the
+// browser's filter choice, but it is always well below an untouched 1:1 copy.
+ok('motion resamples, stillness stays crisp',
+  feats.stillSpread > 150 && feats.movingSpread < feats.stillSpread * 0.6,
+  `still spread ${feats.stillSpread}, moving ${feats.movingSpread}, ` +
+  `shadow ${feats.shadowPixels} -> ${feats.movingShadowPixels}`);
 ok('visualiser reads the audio spectrum', feats.bands.n === 64 && feats.bands.peak > 0.2, JSON.stringify(feats.bands));
 
 const mix = await page.evaluate(async () => {
@@ -472,34 +505,76 @@ const remembered = await page.evaluate(async () => {
 ok('folders are remembered once and can be forgotten',
   remembered.once === 1 && remembered.twice === 1 && remembered.after === 0, JSON.stringify(remembered));
 
-// Judder guard. Every output frame must resolve to its own source frame: seek
-// on a frame boundary and float rounding decides which side you land on, so
-// frames get captured twice and others skipped — the thing you see on a pan.
+// Judder guards. Three separate things have to hold for a pan to come out
+// smooth, and each one used to fail on its own.
 const sampling = await page.evaluate(() => {
   const { playback, store } = window.videdit;
   const fps = store.project.fps;
-  const probe = (clip) => {
-    const frames = [];
-    let nearestEdge = 1;
-    for (let f = 0; f < 240; f++) {
-      const src = playback.sourceTimeOf(clip, clip.start + f / fps) * fps;
-      frames.push(Math.floor(src));
-      nearestEdge = Math.min(nearestEdge, Math.abs(src - Math.round(src)));
-    }
-    const stepsByOne = frames.every((n, i) => i === 0 || n === frames[i - 1] + 1);
-    return { stepsByOne, first: frames[0], nearestEdge };
-  };
+  const clip = { start: 0, inPoint: 0, speed: 1 };
+  // 1. A frame is sampled at its centre, so a seek never lands on a source
+  //    frame boundary where float rounding picks the side for you.
+  let nearestEdge = 1;
+  const frames = [];
+  for (let f = 0; f < 240; f++) {
+    const src = playback.sourceTimeOf(clip, playback.frameCentre(f / fps)) * fps;
+    frames.push(Math.floor(src));
+    nearestEdge = Math.min(nearestEdge, Math.abs(src - Math.round(src)));
+  }
+  const stepsByOne = frames.every((n, i) => i === 0 || n === frames[i - 1] + 1);
+  return { stepsByOne, first: frames[0], nearestEdge };
+});
+ok('each output frame samples its own source frame',
+  sampling.stepsByOne && sampling.first === 0 && sampling.nearestEdge > 0.25,
+  JSON.stringify(sampling));
+
+const motion = await page.evaluate(() => {
+  const { renderer, media, store } = window.videdit;
+  const asset = media.list().find((a) => a.kind === 'image');
+  const mk = (enabled, toX) => ({
+    assetId: asset.id, type: 'image', start: 0, duration: 4, enabled: true,
+    x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, pixelSnap: true,
+    crop: { top: 0, right: 0, bottom: 0, left: 0 },
+    motion: { enabled, from: { x: 0, y: 0, scale: 1 }, to: { x: toX, y: 0, scale: 1 },
+              start: 0, end: 0, easing: 'linear' },
+  });
+  // A pan of 97 px over 4 s: deliberately not a whole number of pixels per
+  // frame, which is the case whole-pixel snapping turns into a stepped crawl.
+  const at = (clip, f) => renderer.boxFor(clip, f / store.project.fps).left;
+  const pan = mk(true, -97);
+  const still = mk(false, 0);
+  const xs = [];
+  for (let f = 0; f < 60; f++) xs.push(at(pan, f));
   return {
-    fps,
-    head: probe({ start: 0, inPoint: 0, speed: 1 }),
-    offset: probe({ start: 1.5, inPoint: 2, speed: 1 }),
+    // 2. A moving clip travels at subpixel precision and never stalls.
+    stalls: xs.filter((v, i) => i > 0 && v === xs[i - 1]).length,
+    fractional: xs.filter((v) => !Number.isInteger(v)).length,
+    // 3. A still clip is still snapped — screenshots stay bit-exact.
+    stillSnapped: [0, 1, 2, 3, 4].every((f) => Number.isInteger(at(still, f))),
   };
 });
-ok('export samples one distinct source frame per output frame',
-  sampling.head.stepsByOne && sampling.head.first === 0 && sampling.head.nearestEdge > 0.25
-  && sampling.offset.stepsByOne && sampling.offset.first === 2 * sampling.fps
-  && sampling.offset.nearestEdge > 0.25,
-  JSON.stringify(sampling));
+ok('a pan travels subpixel and never stalls, stills stay snapped',
+  motion.stalls === 0 && motion.fractional > 50 && motion.stillSnapped,
+  JSON.stringify(motion));
+
+const shutter = await page.evaluate(() => {
+  const { exporter } = window.videdit;
+  const fps = 30;
+  const open = exporter.shutterSamples(10, fps, 8, 0.5);
+  const off = exporter.shutterSamples(10, fps, 1, 0);
+  const centre = (10 + 0.5) / fps;
+  return {
+    n: open.length,
+    // The exposure straddles the frame centre and stays inside the frame.
+    centred: Math.abs((open[0] + open[open.length - 1]) / 2 - centre) < 1e-9,
+    span: (open[open.length - 1] - open[0]) * fps,
+    inside: open[0] > 10 / fps && open[open.length - 1] < 11 / fps,
+    offIsOneInstant: off.length === 1 && Math.abs(off[0] - centre) < 1e-9,
+  };
+});
+ok('the shutter opens across the frame and closes to one instant when off',
+  shutter.n === 8 && shutter.centred && shutter.inside && shutter.offIsOneInstant
+  && shutter.span > 0.4 && shutter.span < 0.5,
+  JSON.stringify(shutter));
 
 ok('no console errors', errors.length === 0, errors.join(' | '));
 

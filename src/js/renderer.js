@@ -5,7 +5,7 @@
 // THE RULE: source pixels are never resized to fit the canvas. A clip's scale
 // defaults to 1 and the frame simply crops whatever falls outside it.
 
-import { clipEnd, fadeAmount, transformAt } from './store.js';
+import { clipEnd, fadeAmount, transformAt, hasMotion } from './store.js';
 import { clamp } from './util.js';
 
 export class Renderer {
@@ -110,7 +110,11 @@ export class Renderer {
     const dh = sh * tr.scale;
     let left = p.width / 2 + tr.x - dw / 2;
     let top = p.height / 2 + tr.y - dh / 2;
-    if (clip.pixelSnap && !tr.rotation) {
+    // Pixel snap keeps a still screenshot bit-exact. On a moving clip it does
+    // the opposite of what it promises: a pan travelling 0.8 px per frame comes
+    // out as hold, jump, jump, hold — a stepped crawl rather than a glide. So
+    // stills stay snapped and motion runs at subpixel precision.
+    if (clip.pixelSnap && !tr.rotation && !hasMotion(clip)) {
       left = Math.round(left);
       top = Math.round(top);
     }
@@ -149,8 +153,11 @@ export class Renderer {
     const box = this.boxFor(clip, t);
     if (!box) return;
 
-    ctx.imageSmoothingEnabled = !!clip.smooth;
-    if (clip.smooth) ctx.imageSmoothingQuality = 'high';
+    // A moving clip lands on fractional pixels, and nearest-neighbour would
+    // snap it straight back onto whole texels — undoing the subpixel placement
+    // and putting the stepping right back. Smooth what moves, leave stills hard.
+    ctx.imageSmoothingEnabled = !!clip.smooth || hasMotion(clip);
+    if (ctx.imageSmoothingEnabled) ctx.imageSmoothingQuality = 'high';
 
     const flipX = clip.flipX ? -1 : 1;
     const flipY = clip.flipY ? -1 : 1;
@@ -160,7 +167,8 @@ export class Renderer {
       ctx.scale(flipX, flipY);
       ctx.drawImage(source, sx, sy, sw, sh, -box.w / 2, -box.h / 2, box.w, box.h);
     } else {
-      // Fast path: axis-aligned, integer position -> exact 1:1 texel mapping.
+      // Axis-aligned. A still clip sits on an integer position here, so this
+      // stays an exact 1:1 texel copy; a moving one carries its fractional offset.
       ctx.drawImage(source, sx, sy, sw, sh, box.left, box.top, box.w, box.h);
     }
   }
@@ -218,7 +226,7 @@ export class Renderer {
     const h = m.height * tr.scale;
     let left = p.width / 2 + tr.x - w / 2;
     let top = p.height / 2 + tr.y - h / 2;
-    if (clip.pixelSnap && !tr.rotation) {
+    if (clip.pixelSnap && !tr.rotation && !hasMotion(clip)) {
       left = Math.round(left);
       top = Math.round(top);
     }

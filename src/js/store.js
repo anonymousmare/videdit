@@ -171,6 +171,24 @@ export function fadeAmount(clip, t) {
   return a;
 }
 
+/**
+ * True when a clip's transform actually animates — a pan, a push, a zoom.
+ *
+ * Motion changes how a clip has to be drawn. A still frame wants whole-pixel
+ * placement and nearest-neighbour sampling, which is what keeps an imported
+ * screenshot bit-exact. A moving one wants the opposite: quantising a pan to
+ * whole pixels turns smooth travel into a stepped crawl, because a pan rarely
+ * advances by a whole pixel per frame — it holds, jumps one, holds, jumps two.
+ *
+ * Deliberately time-independent, so a clip does not change its drawing rule
+ * part-way through and pop as the ramp starts or ends.
+ */
+export function hasMotion(clip) {
+  const m = clip.motion;
+  if (!m?.enabled) return false;
+  return m.from.x !== m.to.x || m.from.y !== m.to.y || m.from.scale !== m.to.scale;
+}
+
 /** Resolve transform at absolute time t, applying the motion ramp if enabled. */
 export function transformAt(clip, t) {
   const base = { x: clip.x, y: clip.y, scale: clip.scale, rotation: clip.rotation };

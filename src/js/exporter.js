@@ -1,13 +1,18 @@
 // Export. Two routes:
 //   1. WebM  — realtime capture of the canvas + the live audio mix. Quick.
-//   2. PNG frames + WAV — rendered frame by frame, lossless, pixel for pixel
-//      identical to the preview. Mux it with ffmpeg for a final master.
+//   2. PNG frames + WAV — rendered frame by frame, lossless. Mux it with ffmpeg
+//      for a final master.
+//
+// The frame route can render above the project rate and expose each frame across
+// a shutter interval. Both exist for one reason: the preview redraws at the
+// display's refresh rate, so it flatters motion in a way a 30 fps file cannot
+// match on its own. See shutterSamples().
 
 import { el, download, fmtTime, clamp } from './util.js';
 import { icon, hydrateIcons } from './icons.js';
 import { encodeWav } from './audio.js';
 import { Playback } from './playback.js';
-import { clipEnd } from './store.js';
+import { clipEnd, hasMotion } from './store.js';
 import { ZipWriter } from './zip.js';
 import { getCtx } from './media.js';
 
@@ -69,10 +74,23 @@ export class Exporter {
       window.showDirectoryPicker ? el('option', { value: 'folder' }, 'Write into a folder I choose') : null,
       el('option', { value: 'zip' }, 'Download one .zip'),
     );
+    // The preview looks smoother than any export because it redraws at the
+    // display's refresh rate. Rendering more frames closes that gap directly.
+    const fpsChoices = [...new Set([p.fps, 48, 60])].filter((n) => n >= p.fps).sort((a, b) => a - b);
+    const fpsSel = el('select', { class: 'inp' }, ...fpsChoices.map((n) =>
+      el('option', { value: String(n), selected: n === p.fps }, n === p.fps ? `${n} fps · project rate` : `${n} fps`)));
+    const blurSel = el('select', { class: 'inp' },
+      el('option', { value: '0' }, 'Off — one instant per frame'),
+      el('option', { value: '0.25' }, 'Crisp · 90° shutter'),
+      el('option', { value: '0.5', selected: true }, 'Natural · 180° shutter'),
+      el('option', { value: '1' }, 'Dreamy · 360° shutter'),
+    );
 
     const rowVideo = row('Codec', codecSel);
     const rowQual = row('Quality', qualSel);
     const rowDest = row('Write to', destSel);
+    const rowFps = row('Frame rate', fpsSel);
+    const rowBlur = row('Motion blur', blurSel);
     const info = el('div', { class: 'hint' });
     const bar = el('div', { class: 'progress' }, el('i', {}));
     const log = el('div', { class: 'log' }, 'Ready.');
@@ -80,6 +98,8 @@ export class Exporter {
       row('Format', modeSel),
       rowVideo,
       rowQual,
+      rowFps,
+      rowBlur,
       rowDest,
       el('div', { class: 'native-note' }, icon('info', 13), info),
       bar,
@@ -95,12 +115,16 @@ export class Exporter {
     document.body.append(scrim);
     hydrateIcons(modal);
 
-    const frames = Math.max(1, Math.round(dur * p.fps));
     const sync = () => {
       const m = modeSel.value;
+      const fps = Number(fpsSel.value);
+      const shutter = Number(blurSel.value);
+      const frames = Math.max(1, Math.round(dur * fps));
       rowVideo.style.display = m === 'video' ? '' : 'none';
       rowQual.style.display = m === 'video' ? '' : 'none';
       rowDest.style.display = m === 'frames' ? '' : 'none';
+      rowFps.style.display = m === 'frames' ? '' : 'none';
+      rowBlur.style.display = m === 'frames' ? '' : 'none';
       if (m === 'still') {
         info.innerHTML = `One PNG at <code>${fmtTime(this.store.playhead, p.fps)}</code>, ${p.width} x ${p.height}.`;
       } else if (m === 'video') {
@@ -108,13 +132,19 @@ export class Exporter {
           `Captured in real time, so it takes about ${fmtTime(dur, p.fps, false)}. Leave the tab in the foreground. ` +
           `Video codecs are lossy — for a pixel-exact master use the PNG sequence.`;
       } else {
+        const blur = shutter > 0
+          ? `Moving frames are exposed across a ${Math.round(shutter * 360)}° shutter, so pans smear instead of ` +
+            `strobing — the slow part of the export, and the part that buys the smoothness.`
+          : `Every frame is a single instant. Sharpest possible, but a pan will strobe.`;
         info.innerHTML =
-          `${frames} PNG frames at ${p.width} x ${p.height} (${p.fps} fps) plus <code>audio.wav</code>. ` +
-          `Mux them losslessly with:<br><code>ffmpeg -framerate ${p.fps} -i frame_%05d.png -i audio.wav ` +
+          `${frames} PNG frames at ${p.width} x ${p.height} (${fps} fps) plus <code>audio.wav</code>. ${blur}` +
+          `<br>Mux them losslessly with:<br><code>ffmpeg -framerate ${fps} -i frame_%05d.png -i audio.wav ` +
           `-c:v libx264 -crf 12 -preset slow -pix_fmt yuv420p -c:a aac -b:a 320k -movflags +faststart out.mp4</code>`;
       }
     };
     modeSel.addEventListener('change', sync);
+    fpsSel.addEventListener('change', sync);
+    blurSel.addEventListener('change', sync);
     sync();
 
     const close = () => {
@@ -146,7 +176,11 @@ export class Exporter {
       try {
         if (modeSel.value === 'still') await this.exportStill(setProgress);
         else if (modeSel.value === 'video') await this.exportVideo({ mime: codecSel.value, mbps: Number(qualSel.value) }, setProgress);
-        else await this.exportFrames({ dest: destSel.value }, setProgress);
+        else await this.exportFrames({
+          dest: destSel.value,
+          fps: Number(fpsSel.value),
+          shutter: Number(blurSel.value),
+        }, setProgress);
       } catch (err) {
         console.error(err);
         setProgress(0, `Export failed: ${err.message || err}`);
@@ -163,8 +197,9 @@ export class Exporter {
   }
 
   async exportStill(progress) {
-    await this.prepareFrame(this.store.playhead);
-    this.renderer.render(this.store.playhead);
+    const at = this.playback.frameCentre(this.store.playhead);
+    await this.prepareFrame(at);
+    this.renderer.render(at);
     const blob = await new Promise((r) => this.renderer.canvas.toBlob(r, 'image/png'));
     download(blob, `${this.fileBase()}_${Math.round(this.store.playhead * this.store.project.fps)}.png`);
     progress(1, 'Frame saved.');
@@ -181,19 +216,79 @@ export class Exporter {
         const v = this.media.videoFor(clip);
         if (!v) continue;
         if (!v.paused) v.pause();
-        // Same sampling rule the preview uses, so the two stay frame-identical.
         jobs.push(Playback.seekExact(v, this.playback.sourceTimeOf(clip, t)));
       }
     }
     if (jobs.length) await Promise.all(jobs);
   }
 
+  /**
+   * The instants the shutter is open for output frame `f`.
+   *
+   * A frame is not an instant, it is an interval. A camera integrates light for
+   * the fraction of that interval its shutter stays open — 180 degrees is half
+   * the frame — which is exactly why filmed motion smears rather than strobes.
+   * Rendering one instant per frame is a zero-length shutter: mathematically
+   * perfect, and the reason a rendered pan judders where a filmed one glides.
+   * The preview hides this by running at the display's refresh rate; the export
+   * cannot, so it has to earn the smoothness the way a camera does.
+   */
+  shutterSamples(f, fps, samples, shutter) {
+    const centre = (f + 0.5) / fps;
+    if (samples <= 1 || shutter <= 0) return [centre];
+    const span = shutter / fps;
+    const out = [];
+    for (let k = 0; k < samples; k++) out.push(centre + span * ((k + 0.5) / samples - 0.5));
+    return out;
+  }
+
+  /** Is anything actually travelling at t? Only then is a blurred exposure worth its cost. */
+  movingAt(t) {
+    return this.renderer.visibleClips(t).some(({ clip }) => hasMotion(clip));
+  }
+
+  /**
+   * Draw one output frame, averaging its shutter samples onto the canvas.
+   *
+   * Accumulation is in float on purpose: compositing N samples at alpha 1/N
+   * would round each one to 8 bits before adding it, which bands every gradient
+   * it touches.
+   */
+  async composeFrame(times) {
+    const { ctx, canvas } = this.renderer;
+    // Video is fetched once, at the centre of the exposure: source footage
+    // already carries whatever blur its own camera gave it, and re-seeking per
+    // sample would buy a decode each for no visible gain.
+    const centre = (times[0] + times[times.length - 1]) / 2;
+    await this.prepareFrame(centre);
+    if (times.length === 1) {
+      this.renderer.render(times[0]);
+      return;
+    }
+    const w = canvas.width;
+    const h = canvas.height;
+    if (!this._acc || this._acc.length !== w * h * 4) this._acc = new Float32Array(w * h * 4);
+    const acc = this._acc;
+    acc.fill(0);
+    for (const t of times) {
+      this.renderer.render(t);
+      const px = ctx.getImageData(0, 0, w, h).data;
+      for (let i = 0; i < acc.length; i++) acc[i] += px[i];
+    }
+    const out = ctx.createImageData(w, h);
+    for (let i = 0; i < acc.length; i++) out.data[i] = acc[i] / times.length;
+    ctx.putImageData(out, 0, 0);
+  }
+
   // ---------------------------------------------------------- PNG sequence
-  async exportFrames({ dest }, progress) {
+  async exportFrames({ dest, fps, shutter }, progress) {
     const p = this.store.project;
     const dur = this.store.duration();
-    const total = Math.max(1, Math.round(dur * p.fps));
+    const total = Math.max(1, Math.round(dur * fps));
     const base = this.fileBase();
+    // A wider shutter spans more time, so it needs more samples to stay smooth
+    // rather than reading as a handful of ghosts.
+    const samples = shutter > 0 ? Math.max(4, Math.round(shutter * 16)) : 1;
     this.audio.resetSmoothing();
 
     let dir = null;
@@ -222,9 +317,9 @@ export class Exporter {
         progress(f / total, `Cancelled at frame ${f}.`);
         return;
       }
-      const t = f / p.fps;
-      await this.prepareFrame(t);
-      this.renderer.render(t);
+      const centre = (f + 0.5) / fps;
+      const times = this.movingAt(centre) ? this.shutterSamples(f, fps, samples, shutter) : [centre];
+      await this.composeFrame(times);
       const blob = await new Promise((r) => this.renderer.canvas.toBlob(r, 'image/png'));
       await writeFile(`frame_${String(f + 1).padStart(5, '0')}.png`, blob);
       if (f % 2 === 0 || f === total - 1) {
@@ -241,17 +336,17 @@ export class Exporter {
       // Mix exactly as many seconds as there are frames. The timeline duration
       // is rarely a whole number of frames, and handing ffmpeg a WAV that is a
       // little longer or shorter than the picture leaves it to pad or truncate.
-      const mix = await this.audio.mixdown(0, total / p.fps);
+      const mix = await this.audio.mixdown(0, total / fps);
       await writeFile('audio.wav', encodeWav(mix));
     }
     const readme =
-      `# ${p.name}\n\n${total} frames, ${p.width}x${p.height}, ${p.fps} fps.\n\n` +
+      `# ${p.name}\n\n${total} frames, ${p.width}x${p.height}, ${fps} fps.\n\n` +
       `Mux to a master file:\n\n` +
-      `ffmpeg -framerate ${p.fps} -i frame_%05d.png${hasAudio ? ' -i audio.wav' : ''} ` +
+      `ffmpeg -framerate ${fps} -i frame_%05d.png${hasAudio ? ' -i audio.wav' : ''} ` +
       `-c:v libx264 -crf 12 -preset slow -pix_fmt yuv420p${hasAudio ? ' -c:a aac -b:a 320k' : ''} ` +
       `-movflags +faststart ${base}.mp4\n\n` +
       `Truly lossless (bigger file):\n\n` +
-      `ffmpeg -framerate ${p.fps} -i frame_%05d.png${hasAudio ? ' -i audio.wav' : ''} ` +
+      `ffmpeg -framerate ${fps} -i frame_%05d.png${hasAudio ? ' -i audio.wav' : ''} ` +
       `-c:v libx264 -qp 0 -preset veryslow -pix_fmt yuv444p${hasAudio ? ' -c:a flac' : ''} ${base}_lossless.mkv\n`;
     await writeFile('README.txt', new Blob([readme], { type: 'text/plain' }));
 

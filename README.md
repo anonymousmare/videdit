@@ -104,11 +104,33 @@ File System Access API). This is the one to use for a trailer. Then:
 
 ```bash
 ffmpeg -framerate 30 -i frame_%05d.png -i audio.wav \
-  -c:v libx264 -crf 12 -preset slow -pix_fmt yuv420p -c:a aac -b:a 320k out.mp4
+  -c:v libx264 -crf 12 -preset slow -pix_fmt yuv420p -c:a aac -b:a 320k \
+  -movflags +faststart out.mp4
 ```
 
 A `README.txt` with the exact command for your project (right frame rate, right
 file names) is written next to the frames.
+
+### Making motion look right
+
+The preview redraws at your display's refresh rate, so a pan there is drawn 60
+or 120 times a second. A 30 fps file gets 30, and the difference is visible: the
+same pan that glides on screen strobes in the export. Two settings close the gap.
+
+**Frame rate** renders above the project rate — 48 or 60 fps — which is the
+literal version of what the preview is doing.
+
+**Motion blur** exposes each moving frame across a shutter interval instead of
+freezing one instant, the way a camera does. 180° is the film standard and the
+default; 90° is crisper and strobes more; 360° smears the most. Only frames with
+something actually moving pay the cost, so a static trailer exports as fast as
+it ever did.
+
+One trade comes with this: a clip that is moving is drawn at subpixel positions
+and resampled, so it softens very slightly while it travels. A clip that is
+holding still is untouched and stays bit-exact. That is the right way round —
+nobody can resolve fine detail in a moving frame, and stepping is far more
+obvious than a half-pixel of softness.
 
 **Video file** — a real-time capture of the canvas plus the live audio mix to
 WebM (VP9/VP8). One file, quick, but lossy and it takes as long as the trailer
