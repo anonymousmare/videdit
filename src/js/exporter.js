@@ -76,7 +76,10 @@ export class Exporter {
     );
     // The preview looks smoother than any export because it redraws at the
     // display's refresh rate. Rendering more frames closes that gap directly.
-    const fpsChoices = [...new Set([p.fps, 48, 60])].filter((n) => n >= p.fps).sort((a, b) => a - b);
+    // 60 and 120 are deliberate: a rate that does not divide evenly into the
+    // display's refresh gets an uneven cadence at playback time — 48 fps on a
+    // 60 Hz screen repeats frames 5:4 and judders no matter how clean the file.
+    const fpsChoices = [...new Set([p.fps, 60, 120])].filter((n) => n >= p.fps).sort((a, b) => a - b);
     const fpsSel = el('select', { class: 'inp' }, ...fpsChoices.map((n) =>
       el('option', { value: String(n), selected: n === p.fps }, n === p.fps ? `${n} fps · project rate` : `${n} fps`)));
     const blurSel = el('select', { class: 'inp' },
@@ -133,9 +136,11 @@ export class Exporter {
           `Video codecs are lossy — for a pixel-exact master use the PNG sequence.`;
       } else {
         const blur = shutter > 0
-          ? `Moving frames are exposed across a ${Math.round(shutter * 360)}° shutter, so pans smear instead of ` +
-            `strobing — the slow part of the export, and the part that buys the smoothness.`
-          : `Every frame is a single instant. Sharpest possible, but a pan will strobe.`;
+          ? `Moving frames are exposed across a ${Math.round(shutter * 360)}° shutter, sampled once per pixel of ` +
+            `travel so the smear stays continuous however fast the move — the slow part of the export, and the ` +
+            `part that buys the smoothness.`
+          : `Every frame is a single instant — exactly what the preview draws. At ${fps} fps this matches what ` +
+            `you see on screen; blur goes past it.`;
         info.innerHTML =
           `${frames} PNG frames at ${p.width} x ${p.height} (${fps} fps) plus <code>audio.wav</code>. ${blur}` +
           `<br>Mux them losslessly with:<br><code>ffmpeg -framerate ${fps} -i frame_%05d.png -i audio.wav ` +
@@ -242,9 +247,41 @@ export class Exporter {
     return out;
   }
 
-  /** Is anything actually travelling at t? Only then is a blurred exposure worth its cost. */
-  movingAt(t) {
-    return this.renderer.visibleClips(t).some(({ clip }) => hasMotion(clip));
+  /**
+   * How far, in canvas pixels, the fastest moving clip travels in one frame at t.
+   * Zero means nothing is going anywhere and the exposure can collapse to an
+   * instant — including at the ends of an eased ramp, where a clip is at rest.
+   */
+  motionPixelsPerFrame(t, fps) {
+    let worst = 0;
+    for (const { clip } of this.renderer.visibleClips(t)) {
+      if (!hasMotion(clip)) continue;
+      const a = this.renderer.boxFor(clip, t);
+      const b = this.renderer.boxFor(clip, t + 1 / fps);
+      if (!a || !b) continue;
+      // Travel of the centre, plus whatever a zoom pushes the edges on top.
+      const travel = Math.hypot(b.cx - a.cx, b.cy - a.cy);
+      const spread = Math.max(Math.abs(b.w - a.w), Math.abs(b.h - a.h)) / 2;
+      worst = Math.max(worst, travel + spread);
+    }
+    return worst;
+  }
+
+  /**
+   * How many samples one exposure needs.
+   *
+   * What matters is the gap between consecutive samples, not how many there are:
+   * a fixed count smears a slow pan nicely and breaks a fast one into a row of
+   * discrete ghosts. Taking a sample per pixel of travel inside the open shutter
+   * keeps that gap under a pixel however fast the move.
+   *
+   * The ceiling is a cost bound, not a quality target. Every sample is a full
+   * render plus a full readback, so it only binds past roughly 250 px of travel
+   * per frame — a whip, not a pan — and even then the gap stays near a pixel.
+   */
+  samplesFor(px, shutter) {
+    if (shutter <= 0) return 1;
+    return clamp(Math.ceil(px * shutter) + 1, 4, 256);
   }
 
   /**
@@ -286,9 +323,6 @@ export class Exporter {
     const dur = this.store.duration();
     const total = Math.max(1, Math.round(dur * fps));
     const base = this.fileBase();
-    // A wider shutter spans more time, so it needs more samples to stay smooth
-    // rather than reading as a handful of ghosts.
-    const samples = shutter > 0 ? Math.max(4, Math.round(shutter * 16)) : 1;
     this.audio.resetSmoothing();
 
     let dir = null;
@@ -318,7 +352,10 @@ export class Exporter {
         return;
       }
       const centre = (f + 0.5) / fps;
-      const times = this.movingAt(centre) ? this.shutterSamples(f, fps, samples, shutter) : [centre];
+      const px = this.motionPixelsPerFrame(centre, fps);
+      const times = px > 0
+        ? this.shutterSamples(f, fps, this.samplesFor(px, shutter), shutter)
+        : [centre];
       await this.composeFrame(times);
       const blob = await new Promise((r) => this.renderer.canvas.toBlob(r, 'image/png'));
       await writeFile(`frame_${String(f + 1).padStart(5, '0')}.png`, blob);

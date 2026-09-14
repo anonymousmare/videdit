@@ -571,6 +571,31 @@ const shutter = await page.evaluate(() => {
     offIsOneInstant: off.length === 1 && Math.abs(off[0] - centre) < 1e-9,
   };
 });
+const adaptive = await page.evaluate(() => {
+  const { exporter } = window.videdit;
+  const fps = 30;
+  // Across speeds from a crawl to a whip pan, consecutive samples must stay
+  // under a pixel apart — that gap is what separates a smear from a row of
+  // ghosts, and it is the thing a fixed sample count gets wrong.
+  const gaps = [0.5, 3, 12, 40, 150, 500].map((px) => {
+    const n = exporter.samplesFor(px, 0.5);
+    const ts = exporter.shutterSamples(10, fps, n, 0.5);
+    const spanPx = (ts[ts.length - 1] - ts[0]) * fps * px;
+    return +(spanPx / (ts.length - 1)).toFixed(4);
+  });
+  return {
+    gaps,
+    worst: Math.max(...gaps),
+    // The cap is a cost bound: past it the gap grows, but it takes a whip pan.
+    capped: exporter.samplesFor(1e6, 1),
+    whipGap: +(1e6 * 0.5 / (exporter.samplesFor(1e6, 0.5) - 1)).toFixed(1),
+    offIsOne: exporter.samplesFor(500, 0),
+  };
+});
+ok('blur samples stay under a pixel apart across real pan speeds',
+  adaptive.worst <= 1 && adaptive.capped === 256 && adaptive.offIsOne === 1,
+  JSON.stringify(adaptive));
+
 ok('the shutter opens across the frame and closes to one instant when off',
   shutter.n === 8 && shutter.centred && shutter.inside && shutter.offIsOneInstant
   && shutter.span > 0.4 && shutter.span < 0.5,

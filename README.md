@@ -117,14 +117,21 @@ The preview redraws at your display's refresh rate, so a pan there is drawn 60
 or 120 times a second. A 30 fps file gets 30, and the difference is visible: the
 same pan that glides on screen strobes in the export. Two settings close the gap.
 
-**Frame rate** renders above the project rate — 48 or 60 fps — which is the
-literal version of what the preview is doing.
+**Frame rate** renders above the project rate — 60 or 120 fps — which is the
+literal version of what the preview is doing. Pick a rate that divides evenly
+into the screen it will be watched on: 30 and 60 both land cleanly on a 60 Hz
+display, while 48 has to be stretched 5:4 and judders on playback however clean
+the file is. If you want the export to match the preview exactly, that is 60 fps
+with motion blur off — the preview draws one instant per frame too.
 
 **Motion blur** exposes each moving frame across a shutter interval instead of
 freezing one instant, the way a camera does. 180° is the film standard and the
-default; 90° is crisper and strobes more; 360° smears the most. Only frames with
-something actually moving pay the cost, so a static trailer exports as fast as
-it ever did.
+default; 90° is crisper and strobes more; 360° smears the most. The number of
+samples follows how fast the frame is actually moving, keeping them under a
+pixel apart, because what makes a smear look like a smear rather than a stack of
+ghosts is the gap between samples, not how many there are. Only frames with
+something moving pay for any of it, so a static trailer exports as fast as it
+ever did.
 
 One trade comes with this: a clip that is moving is drawn at subpixel positions
 and resampled, so it softens very slightly while it travels. A clip that is
