@@ -155,11 +155,24 @@ So the preview is the easier picture, not the better one, and "match the preview
 is the wrong target — the export can be made cleaner than what the preview
 shows. If you want to compare like with like, set the preview zoom to 100%.
 
-One trade comes with this: a clip that is moving is drawn at subpixel positions
-and resampled, so it softens very slightly while it travels. A clip that is
-holding still is untouched and stays bit-exact. That is the right way round —
-nobody can resolve fine detail in a moving frame, and stepping is far more
-obvious than a half-pixel of softness.
+**Moving detail** is the other half of that. Detail finer than the pixel grid has
+no stable representation at a fractional offset, so it pulses as the offset walks
+across a pixel — text and hairlines crawl. Prefiltering the still with a
+sub-pixel Gaussian before it is translated takes that detail out and the picture
+holds. Measured on a 0.9 px per frame pan over stand-in screenshot content, going
+by frame-to-frame variation in local detail:
+
+| | crawl | detail |
+|---|---|---|
+| no blur, no prefilter | 25.7% | 66.7 |
+| fixed 180° | 15.3% | 66.4 |
+| Auto shutter | 4.4% | 65.6 |
+| Auto + Gentle prefilter | 2.2% | 63.3 |
+| Auto + More prefilter | 1.7% | 60.5 |
+
+A clip that is holding still is untouched by any of this and stays bit-exact.
+That is the right way round: nobody resolves fine detail in a moving frame, and
+crawl is far more obvious than a fraction of a pixel of softness.
 
 **Video file** — a real-time capture of the canvas plus the live audio mix to
 WebM (VP9/VP8). One file, quick, but lossy and it takes as long as the trailer

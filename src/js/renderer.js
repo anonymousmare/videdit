@@ -15,6 +15,10 @@ export class Renderer {
     this.store = store;
     this.media = media;
     this.spectrum = spectrum;
+    // Sub-pixel prefilter applied to moving stills. The preview gets this effect
+    // for free by being displayed fitted to its pane; a frame written at 1:1
+    // does not, so the export asks for it explicitly.
+    this.motionSoftness = 0;
     this.ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
     this.syncSize();
   }
@@ -139,10 +143,13 @@ export class Renderer {
     const { ctx } = this;
     const asset = this.media.get(clip.assetId);
     if (!asset) return;
+    const moving = hasMotion(clip);
     let source = asset.el;
     if (clip.type === 'video') {
       source = this.media.videoFor(clip) || asset.el;
       if (!source || source.readyState < 2) return;
+    } else if (moving && this.motionSoftness > 0) {
+      source = this.media.softened(clip.assetId, this.motionSoftness) || source;
     }
     if (!source) return;
     const srcW = clip.type === 'video' ? source.videoWidth || asset.width : asset.width;
@@ -156,7 +163,7 @@ export class Renderer {
     // A moving clip lands on fractional pixels, and nearest-neighbour would
     // snap it straight back onto whole texels — undoing the subpixel placement
     // and putting the stepping right back. Smooth what moves, leave stills hard.
-    ctx.imageSmoothingEnabled = !!clip.smooth || hasMotion(clip);
+    ctx.imageSmoothingEnabled = !!clip.smooth || moving;
     if (ctx.imageSmoothingEnabled) ctx.imageSmoothingQuality = 'high';
 
     const flipX = clip.flipX ? -1 : 1;

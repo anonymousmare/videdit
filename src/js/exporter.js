@@ -8,34 +8,13 @@
 // display's refresh rate, so it flatters motion in a way a 30 fps file cannot
 // match on its own. See shutterSamples().
 
-import { el, download, fmtTime, clamp } from './util.js';
+import { el, download, fmtTime, clamp, TO_LIGHT, TO_BYTE } from './util.js';
 import { icon, hydrateIcons } from './icons.js';
 import { encodeWav } from './audio.js';
 import { Playback } from './playback.js';
 import { clipEnd, hasMotion } from './store.js';
 import { ZipWriter } from './zip.js';
 import { getCtx } from './media.js';
-
-/**
- * sRGB is a storage curve, not a measure of light: byte 128 carries about 22% of
- * the light of byte 255, not half of it. A shutter integrates photons, so the
- * samples of an exposure have to be averaged in linear light and converted back
- * afterwards. Averaged as raw bytes instead, every smear comes out far darker
- * than the thing that cast it — half a frame of white over black gives 128 where
- * the light says 188 — and that is exactly where a trailer lives: a bright title
- * travelling across black.
- */
-const TO_LIGHT = new Float32Array(256);
-for (let i = 0; i < 256; i++) {
-  const c = i / 255;
-  TO_LIGHT[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-}
-// Back the other way, off a table because the curve is too slow to run per pixel.
-const TO_BYTE = new Uint8ClampedArray(4096);
-for (let i = 0; i < 4096; i++) {
-  const c = i / 4095;
-  TO_BYTE[i] = Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055));
-}
 
 const CODECS = [
   ['video/webm;codecs=vp9,opus', 'WebM · VP9'],
@@ -114,8 +93,14 @@ export class Exporter {
     const rowVideo = row('Codec', codecSel);
     const rowQual = row('Quality', qualSel);
     const rowDest = row('Write to', destSel);
+    const softSel = el('select', { class: 'inp' },
+      el('option', { value: '0.5', selected: true }, 'Gentle · matches the preview'),
+      el('option', { value: '0' }, 'Off — sharpest, fine detail may crawl'),
+      el('option', { value: '0.7' }, 'More — stillest fine detail'),
+    );
     const rowFps = row('Frame rate', fpsSel);
     const rowBlur = row('Motion blur', blurSel);
+    const rowSoft = row('Moving detail', softSel);
     const info = el('div', { class: 'hint' });
     const bar = el('div', { class: 'progress' }, el('i', {}));
     const log = el('div', { class: 'log' }, 'Ready.');
@@ -125,6 +110,7 @@ export class Exporter {
       rowQual,
       rowFps,
       rowBlur,
+      rowSoft,
       rowDest,
       el('div', { class: 'native-note' }, icon('info', 13), info),
       bar,
@@ -151,6 +137,7 @@ export class Exporter {
       rowDest.style.display = m === 'frames' ? '' : 'none';
       rowFps.style.display = m === 'frames' ? '' : 'none';
       rowBlur.style.display = m === 'frames' ? '' : 'none';
+      rowSoft.style.display = m === 'frames' ? '' : 'none';
       if (m === 'still') {
         info.innerHTML = `One PNG at <code>${fmtTime(this.store.playhead, p.fps)}</code>, ${p.width} x ${p.height}.`;
       } else if (m === 'video') {
@@ -158,6 +145,10 @@ export class Exporter {
           `Captured in real time, so it takes about ${fmtTime(dur, p.fps, false)}. Leave the tab in the foreground. ` +
           `Video codecs are lossy — for a pixel-exact master use the PNG sequence.`;
       } else {
+        const soft = Number(softSel.value) > 0
+          ? ` Moving stills are prefiltered by ${softSel.value} px first, which is what the preview gets for ` +
+            `free by being displayed fitted to its pane.`
+          : '';
         const blur = auto
           ? `Moving frames are exposed across a 180° shutter, opened towards 360° wherever the motion is slow ` +
             `enough that a narrow one would leave fine detail crawling. Samples run one per pixel of travel, so ` +
@@ -169,7 +160,7 @@ export class Exporter {
             : `Every frame is a single instant — exactly what the preview draws. At ${fps} fps this matches what ` +
               `you see on screen; blur goes past it.`;
         info.innerHTML =
-          `${frames} PNG frames at ${p.width} x ${p.height} (${fps} fps) plus <code>audio.wav</code>. ${blur}` +
+          `${frames} PNG frames at ${p.width} x ${p.height} (${fps} fps) plus <code>audio.wav</code>. ${blur}${soft}` +
           `<br>Mux them losslessly with:<br><code>ffmpeg -framerate ${fps} -i frame_%05d.png -i audio.wav ` +
           `-c:v libx264 -crf 12 -preset slow -pix_fmt yuv420p -c:a aac -b:a 320k -movflags +faststart out.mp4</code>`;
       }
@@ -177,6 +168,7 @@ export class Exporter {
     modeSel.addEventListener('change', sync);
     fpsSel.addEventListener('change', sync);
     blurSel.addEventListener('change', sync);
+    softSel.addEventListener('change', sync);
     sync();
 
     const close = () => {
@@ -213,6 +205,7 @@ export class Exporter {
           fps: Number(fpsSel.value),
           auto: blurSel.value === 'auto',
           shutter: blurSel.value === 'auto' ? 0.5 : Number(blurSel.value),
+          softness: Number(softSel.value),
         }, setProgress);
       } catch (err) {
         console.error(err);
@@ -376,7 +369,22 @@ export class Exporter {
   }
 
   // ---------------------------------------------------------- PNG sequence
-  async exportFrames({ dest, fps, shutter, auto = false }, progress) {
+  /**
+   * The prefilter is a render setting, not an edit, so it is put on the shared
+   * renderer only for the duration of the export and taken off again whatever
+   * happens — the preview draws through this same renderer.
+   */
+  async exportFrames(opts, progress) {
+    this.renderer.motionSoftness = opts.softness || 0;
+    try {
+      return await this.writeFrames(opts, progress);
+    } finally {
+      this.renderer.motionSoftness = 0;
+      this.playback.invalidate();
+    }
+  }
+
+  async writeFrames({ dest, fps, shutter, auto = false }, progress) {
     const p = this.store.project;
     const dur = this.store.duration();
     const total = Math.max(1, Math.round(dur * fps));

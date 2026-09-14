@@ -673,6 +673,80 @@ const gamma = await page.evaluate(async () => {
 ok('the shutter is averaged in linear light, not in sRGB bytes',
   gamma.offLight <= 2 && gamma.apart > 20 && gamma.offBytes > 20, JSON.stringify(gamma));
 
+// End to end on stand-in screenshot content: a slow pan is where fine detail
+// crawls, and the whole point of the shutter and the prefilter is to stop it.
+await page.setInputFiles('#filePicker', [join(DIR, 'ui.png')]);
+await page.waitForFunction(() => window.videdit.media.list().some((a) => a.name === 'ui.png'),
+  null, { timeout: 20000 });
+
+const crawl = await page.evaluate(async () => {
+  const { store, exporter, renderer, media, timeline } = window.videdit;
+  store.project.tracks.forEach((t) => (t.clips.length = 0));
+  timeline.appendAsset(media.list().find((a) => a.name === 'ui.png').id, 0);
+  const img = store.allClips().find((c) => c.type === 'image');
+  img.duration = 6; img.fade.in = 0; img.fade.out = 0;
+  // 162 px over 6 s at 30 fps = 0.9 px per frame.
+  Object.assign(img.motion, { enabled: true, easing: 'linear',
+    from: { x: 0, y: 0, scale: 1 }, to: { x: -162, y: 0, scale: 1 } });
+  store.changed();
+  const fps = store.project.fps;
+  const detail = () => {
+    const d = renderer.ctx.getImageData(300, 300, 300, 300).data;
+    let a = 0, a2 = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) { a += d[i]; a2 += d[i] * d[i]; n++; }
+    return Math.sqrt(Math.max(0, a2 / n - (a / n) ** 2));
+  };
+  const series = async (auto, base, softness) => {
+    renderer.motionSoftness = softness;
+    const v = [];
+    for (let f = 60; f < 80; f++) {
+      const centre = (f + 0.5) / fps;
+      const px = exporter.motionPixelsPerFrame(centre, fps);
+      const sh = auto ? exporter.shutterFor(px, base) : base;
+      const times = px > 0 && sh > 0
+        ? exporter.shutterSamples(f, fps, exporter.samplesFor(px, sh), sh) : [centre];
+      await exporter.composeFrame(times);
+      v.push(detail());
+    }
+    renderer.motionSoftness = 0;
+    const m = v.reduce((x, y) => x + y) / v.length;
+    return { detail: +m.toFixed(1), pct: +(100 * (Math.max(...v) - Math.min(...v)) / m).toFixed(1) };
+  };
+  return {
+    px: +exporter.motionPixelsPerFrame(2, fps).toFixed(2),
+    chose: exporter.shutterFor(0.9, 0.5),
+    raw: await series(false, 0, 0),
+    fixed180: await series(false, 0.5, 0),
+    auto: await series(true, 0.5, 0),
+    autoSoft: await series(true, 0.5, 0.5),
+  };
+});
+ok('the shutter and prefilter stop fine detail crawling on a slow pan',
+  crawl.px === 0.9 && crawl.chose === 1
+  && crawl.auto.pct < crawl.fixed180.pct / 2      // opening the shutter is the big win
+  && crawl.autoSoft.pct < crawl.auto.pct          // the prefilter takes it further
+  && crawl.autoSoft.pct < crawl.raw.pct / 5       // together, a different picture
+  && crawl.autoSoft.detail > crawl.raw.detail * 0.9,  // and detail survives
+  JSON.stringify(crawl));
+
+// The prefilter rides on the renderer the preview draws through, so a failed
+// export must not leave it on. Force the failure rather than trusting the path.
+const restored = await page.evaluate(async () => {
+  const { exporter, renderer } = window.videdit;
+  const real = exporter.writeFrames;
+  exporter.writeFrames = async () => { throw new Error('boom'); };
+  let threw = false;
+  try {
+    await exporter.exportFrames({ dest: 'zip', fps: 30, shutter: 0, softness: 0.5 }, () => {});
+  } catch {
+    threw = true;
+  }
+  exporter.writeFrames = real;
+  return { threw, softness: renderer.motionSoftness };
+});
+ok('a failed export takes softening back off the shared renderer',
+  restored.threw && restored.softness === 0, JSON.stringify(restored));
+
 ok('no console errors', errors.length === 0, errors.join(' | '));
 
 await browser.close();

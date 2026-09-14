@@ -1,7 +1,7 @@
 // Asset library: import files, probe them, decode audio, build waveform peaks
 // and thumbnails. Assets are kept out of the undo history (they hold blobs).
 
-import { uid, emitter, fmtBytes } from './util.js';
+import { uid, emitter, fmtBytes, soften } from './util.js';
 
 export const PEAK_RATE = 400; // peak buckets per second
 
@@ -38,6 +38,7 @@ export class MediaLibrary {
     this.assets = new Map();
     this.bus = emitter();
     this._videoPool = new Map(); // clipId -> HTMLVideoElement
+    this._softened = new Map(); // `assetId@sigma` -> prefiltered canvas
   }
   on(e, f) {
     return this.bus.on(e, f);
@@ -120,6 +121,22 @@ export class MediaLibrary {
     URL.revokeObjectURL(a.url);
     this.assets.delete(id);
     this.bus.emit('change');
+  }
+
+  /**
+   * A softened copy of a still, cached. Built once per asset and sigma, because
+   * the same prefiltered image serves every frame of the pan that needs it.
+   */
+  softened(assetId, sigma) {
+    const a = this.get(assetId);
+    if (!a?.el || !(sigma > 0) || a.kind !== 'image') return a?.el || null;
+    const key = `${assetId}@${sigma}`;
+    let c = this._softened.get(key);
+    if (!c) {
+      c = soften(a.el, sigma);
+      this._softened.set(key, c);
+    }
+    return c;
   }
 
   /** A dedicated <video> per clip so overlapping uses of one asset stay independent. */
