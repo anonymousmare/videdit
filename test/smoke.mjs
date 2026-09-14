@@ -472,6 +472,35 @@ const remembered = await page.evaluate(async () => {
 ok('folders are remembered once and can be forgotten',
   remembered.once === 1 && remembered.twice === 1 && remembered.after === 0, JSON.stringify(remembered));
 
+// Judder guard. Every output frame must resolve to its own source frame: seek
+// on a frame boundary and float rounding decides which side you land on, so
+// frames get captured twice and others skipped — the thing you see on a pan.
+const sampling = await page.evaluate(() => {
+  const { playback, store } = window.videdit;
+  const fps = store.project.fps;
+  const probe = (clip) => {
+    const frames = [];
+    let nearestEdge = 1;
+    for (let f = 0; f < 240; f++) {
+      const src = playback.sourceTimeOf(clip, clip.start + f / fps) * fps;
+      frames.push(Math.floor(src));
+      nearestEdge = Math.min(nearestEdge, Math.abs(src - Math.round(src)));
+    }
+    const stepsByOne = frames.every((n, i) => i === 0 || n === frames[i - 1] + 1);
+    return { stepsByOne, first: frames[0], nearestEdge };
+  };
+  return {
+    fps,
+    head: probe({ start: 0, inPoint: 0, speed: 1 }),
+    offset: probe({ start: 1.5, inPoint: 2, speed: 1 }),
+  };
+});
+ok('export samples one distinct source frame per output frame',
+  sampling.head.stepsByOne && sampling.head.first === 0 && sampling.head.nearestEdge > 0.25
+  && sampling.offset.stepsByOne && sampling.offset.first === 2 * sampling.fps
+  && sampling.offset.nearestEdge > 0.25,
+  JSON.stringify(sampling));
+
 ok('no console errors', errors.length === 0, errors.join(' | '));
 
 await browser.close();

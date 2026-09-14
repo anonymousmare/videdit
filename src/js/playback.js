@@ -138,8 +138,18 @@ export class Playback {
     return out;
   }
 
+  /**
+   * Where in the source a timeline instant sits — sampled at the CENTRE of the
+   * output frame, never on its edge. `t` is always a multiple of 1/fps, so when
+   * the source runs at the project frame rate every seek would land exactly on
+   * a source frame boundary, and which side of that boundary you get comes down
+   * to float rounding. The result is that some source frames get captured twice
+   * and others never: invisible on a locked-off shot, obvious judder on a pan.
+   * Half a frame in, the frame under the playhead is the only candidate.
+   */
   sourceTimeOf(clip, t) {
-    return clip.inPoint + Math.max(0, t - clip.start) * (clip.speed || 1);
+    const half = 0.5 / (this.store.project.fps || 30);
+    return clip.inPoint + (Math.max(0, t - clip.start) + half) * (clip.speed || 1);
   }
 
   primeVideos(t) {
@@ -193,24 +203,38 @@ export class Playback {
     }
   }
 
-  /** Seek one video element and wait for the frame to actually be ready. */
+  /**
+   * Seek one video element and wait for the frame to actually be ready to draw.
+   *
+   * `seeked` only promises the playback position moved; the decoded frame may
+   * not have been handed to the compositor yet, so drawing on that event can
+   * still capture the previous one. Where the browser offers it, wait for
+   * requestVideoFrameCallback as well, which fires once a frame really has been
+   * presented — that is the frame drawImage() will read.
+   */
   static seekExact(video, time) {
     return new Promise((res) => {
       if (Math.abs(video.currentTime - time) < 1e-4 && video.readyState >= 2) return res();
       let done = false;
+      let timer = null;
       const ok = () => {
         if (done) return;
         done = true;
-        video.removeEventListener('seeked', ok);
+        clearTimeout(timer);
+        video.removeEventListener('seeked', onSeeked);
         res();
       };
-      video.addEventListener('seeked', ok);
+      const onSeeked = () => {
+        if (typeof video.requestVideoFrameCallback === 'function') video.requestVideoFrameCallback(ok);
+        else ok();
+      };
+      video.addEventListener('seeked', onSeeked, { once: true });
+      timer = setTimeout(ok, 2000);
       try {
         video.currentTime = time;
       } catch {
         ok();
       }
-      setTimeout(ok, 1200);
     });
   }
 }
